@@ -1,20 +1,36 @@
 # Architecture
 
-The target system has four major layers:
+The implemented system has four major layers:
 
 ```text
 clients/workers
     |
 scheduler API
     |
-Raft replicated state machine
+autonomous Raft node core
     |
 Storage Gateway -> external resource
 ```
 
-The scheduler state is replicated through Raft. External side effects are not
-made safe by Raft alone. Writes to external resources must pass through the
-Storage Gateway, which validates fencing tokens and rejects stale writers.
+Raft nodes are event-driven. They receive ticks and RPC messages, but elections,
+heartbeats, replication retry, `nextIndex`, `matchIndex`, and commit advancement
+are owned by `raft.Node`.
+
+Transport is abstracted by `raft.Transport`:
+
+```text
+              +--------------------+
+raft.Node --> | raft.Transport     |
+              +---------+----------+
+                        |
+          +-------------+--------------+
+          |                            |
+   VirtualNetwork              future real transport
+```
+
+External side effects are not made safe by Raft alone. Writes to external
+resources must pass through the Storage Gateway, which validates fencing tokens
+and rejects stale writers.
 
 ## Local Commands
 
@@ -26,5 +42,6 @@ go test ./...
 ## Implemented Status
 
 The current code implements this architecture as a deterministic library and
-test harness. The production RPC boundary and worker fleet are intentionally
-left out of the verified scope.
+simulation harness. The production RPC boundary and worker fleet are
+intentionally left out of the verified scope.
+

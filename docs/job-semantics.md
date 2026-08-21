@@ -50,3 +50,6 @@ go test ./internal/scheduler ./internal/gateway
 - `TestRetriesMoveToDeadLetterQueue`
 - `TestFencingTokensAreStrictlyMonotonic`
 - `TestRejectsStaleFencingToken`
+- `TestOldOwnerTokenRejectedAfterOwnershipChange`
+- `TestDLQAndCompletedJobsAreTerminal`
+

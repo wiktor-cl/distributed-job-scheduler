@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jhinr/distributed-job-scheduler/internal/gateway"
-	"github.com/jhinr/distributed-job-scheduler/internal/scheduler"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/gateway"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/scheduler"
 )
 
 func main() {

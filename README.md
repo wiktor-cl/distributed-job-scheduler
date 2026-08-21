@@ -10,11 +10,12 @@ treated as planned work rather than completed behavior.
 
 ## Current Status
 
-The repository contains a compact deterministic implementation slice:
+The repository contains an autonomous deterministic implementation slice:
 
-- Raft core: `RequestVote`, `AppendEntries`, majority commit for current-term
-  entries, conflicting suffix truncation, crash/restart over persistent state,
-  and snapshot installation.
+- Raft core: autonomous election timeouts, `RequestVote`, `AppendEntries`,
+  heartbeats, `nextIndex`/`matchIndex`, majority commit for current-term
+  entries, conflicting suffix repair, crash/restart over persistent state, and
+  snapshot installation through the normal replication flow.
 - WAL: append-only JSONL persistence with fsync on every safety-critical write.
 - Scheduler state machine: submit, claim, start, complete, fail, retry, lease
   expiry, DLQ, and idempotent completion.
@@ -78,6 +79,33 @@ benchmarks/             benchmark methodology and results
 
 ## Verified Scope
 
-The test suite covers the named invariants at the library/simulation layer. It
-does not claim a production network service, a full linearizability checker,
-Byzantine fault tolerance, storage corruption handling, or membership changes.
+Implemented and verified:
+
+- Automatic leader election and failover under deterministic simulation.
+- Majority-only commit behavior.
+- Lagging follower catch-up with backtracking.
+- Snapshot plus remaining log catch-up.
+- Scheduler terminal-state and idempotency behavior.
+- Fencing-token enforcement at the Storage Gateway.
+- WAL replay for term, vote, log entries, and snapshots.
+- 1,000 deterministic randomized seeds in normal tests.
+
+Implemented but limited:
+
+- Observability is an in-process metrics package plus Prometheus/Grafana
+  scaffolding, not a full production telemetry deployment.
+- Benchmarks are in-process deterministic benchmarks.
+
+Planned / stretch:
+
+- Real HTTP/gRPC/TCP multi-process cluster runtime.
+- Full linearizability checker for a narrow lease/lock layer.
+- Storage corruption fault injection.
+- Dynamic Raft membership changes.
+
+Explicitly out of scope:
+
+- Exactly-once job execution.
+- Byzantine fault tolerance.
+- Production-ready deployment claims.
+

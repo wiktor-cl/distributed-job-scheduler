@@ -3,7 +3,8 @@ package verify
 import (
 	"testing"
 
-	"github.com/jhinr/distributed-job-scheduler/internal/scheduler"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/raft"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/scheduler"
 )
 
 func TestHistoryRejectsNonMonotonicFencingToken(t *testing.T) {
@@ -23,5 +24,20 @@ func TestJobInvariantsRejectTerminalOwner(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected invariant violation")
+	}
+}
+
+func TestCommittedEntryDurabilityRejectsDifferentEntryAtCommittedIndex(t *testing.T) {
+	node := raft.NewNode("n1", []raft.NodeID{"n1"}, raft.NewMemoryStorage(raft.PersistentState{
+		Entries: []raft.Entry{{Index: 1, Term: 2, Command: []byte("different")}},
+	}))
+	node.CommitThrough(1)
+	err := CommittedEntryDurability(map[raft.NodeID]*raft.Node{
+		"n1": node,
+	}, map[uint64]raft.Entry{
+		1: {Index: 1, Term: 1, Command: []byte("committed")},
+	})
+	if err == nil {
+		t.Fatal("expected committed entry durability violation")
 	}
 }

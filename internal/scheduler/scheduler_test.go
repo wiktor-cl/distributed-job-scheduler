@@ -62,6 +62,31 @@ func TestRetriesMoveToDeadLetterQueue(t *testing.T) {
 	}
 }
 
+func TestDLQAndCompletedJobsAreTerminal(t *testing.T) {
+	sm := NewStateMachine(1)
+	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-terminal", MaxAttempts: 1})
+	_, _ = sm.Apply(Command{Type: FailCommand, JobID: "job-terminal", Now: 1, Error: "boom"})
+	claim, err := sm.Apply(Command{Type: ClaimCommand, JobID: "job-terminal", WorkerID: "w1", Now: 2, LeaseDuration: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.Changed || claim.Job.Status != DLQ {
+		t.Fatalf("DLQ job changed on claim: %+v", claim)
+	}
+
+	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-completed"})
+	_, _ = sm.Apply(Command{Type: ClaimCommand, JobID: "job-completed", WorkerID: "w1", Now: 1, LeaseDuration: 10})
+	_, _ = sm.Apply(Command{Type: StartCommand, JobID: "job-completed", WorkerID: "w1", Now: 2})
+	_, _ = sm.Apply(Command{Type: CompleteCommand, JobID: "job-completed", WorkerID: "w1", Now: 3})
+	start, err := sm.Apply(Command{Type: StartCommand, JobID: "job-completed", WorkerID: "w1", Now: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if start.Changed || start.Job.Status != Completed {
+		t.Fatalf("completed job returned to running: %+v", start)
+	}
+}
+
 func TestFencingTokensAreStrictlyMonotonic(t *testing.T) {
 	sm := NewStateMachine(1)
 	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-4"})

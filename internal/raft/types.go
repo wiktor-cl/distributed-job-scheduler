@@ -58,8 +58,9 @@ type AppendEntriesRequest struct {
 }
 
 type AppendEntriesResponse struct {
-	Term    uint64
-	Success bool
+	Term       uint64
+	Success    bool
+	MatchIndex uint64
 }
 
 type InstallSnapshotRequest struct {
@@ -69,7 +70,24 @@ type InstallSnapshotRequest struct {
 }
 
 type InstallSnapshotResponse struct {
-	Term uint64
+	Term              uint64
+	LastIncludedIndex uint64
+}
+
+type Transport interface {
+	SendRequestVote(from, to NodeID, req RequestVoteRequest)
+	SendRequestVoteResponse(from, to NodeID, resp RequestVoteResponse)
+	SendAppendEntries(from, to NodeID, req AppendEntriesRequest)
+	SendAppendEntriesResponse(from, to NodeID, resp AppendEntriesResponse)
+	SendInstallSnapshot(from, to NodeID, req InstallSnapshotRequest)
+	SendInstallSnapshotResponse(from, to NodeID, resp InstallSnapshotResponse)
+}
+
+type NodeConfig struct {
+	ElectionTimeoutMin int64
+	ElectionTimeoutMax int64
+	HeartbeatInterval  int64
+	Seed               int64
 }
 
 type Storage interface {

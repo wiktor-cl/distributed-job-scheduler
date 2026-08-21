@@ -77,6 +77,17 @@ func (c *VirtualClock) RunUntilIdle(limit int) error {
 	return nil
 }
 
+func (c *VirtualClock) RunNext() bool {
+	if c.queue.Len() == 0 {
+		return false
+	}
+	item := heap.Pop(&c.queue).(event)
+	c.now = item.at
+	c.trace = append(c.trace, item.name)
+	item.fn()
+	return true
+}
+
 func (c *VirtualClock) Trace() []string {
 	return append([]string(nil), c.trace...)
 }

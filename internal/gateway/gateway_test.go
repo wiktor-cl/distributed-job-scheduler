@@ -15,3 +15,19 @@ func TestRejectsStaleFencingToken(t *testing.T) {
 		t.Fatalf("resource changed after stale write: %+v", got)
 	}
 }
+
+func TestOldOwnerTokenRejectedAfterOwnershipChange(t *testing.T) {
+	gw := New()
+	oldToken := uint64(10)
+	newToken := uint64(11)
+	if err := gw.Write(Write{Resource: "resource:lease-demo", Value: "new-owner", Token: newToken}); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Write(Write{Resource: "resource:lease-demo", Value: "old-owner", Token: oldToken}); err == nil {
+		t.Fatal("expected old owner token to be rejected after ownership change")
+	}
+	got := gw.Read("resource:lease-demo")
+	if got.Value != "new-owner" || got.HighestAcceptedToken != newToken {
+		t.Fatalf("stale owner mutated protected resource: %+v", got)
+	}
+}

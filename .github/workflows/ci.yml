@@ -18,10 +18,14 @@ jobs:
           cache: true
       - name: Build
         run: go build ./...
+      - name: Gofmt check
+        run: test -z "$(gofmt -l .)"
       - name: Vet
         run: go vet ./...
       - name: Test
         run: go test ./...
+      - name: Race tests
+        run: go test -race ./...
 
   deterministic-simulation-smoke:
     runs-on: ubuntu-latest
@@ -44,4 +48,5 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Nightly deterministic chaos suite
-        run: go test ./internal/verify -run TestChaosManySeeds -count=1 -args -seeds=500
+        run: go test ./internal/verify -run TestRandomizedDeterministicSeeds -count=1 -args -seeds=10000
+

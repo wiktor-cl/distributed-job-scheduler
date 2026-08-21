@@ -47,3 +47,36 @@ func TestReplayRestoresTermVoteEntriesAndSnapshot(t *testing.T) {
 		t.Fatalf("snapshot = %+v", state.Snapshot)
 	}
 }
+
+func TestCrashPointReplayAfterEachDurableWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "node.wal")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetTermVote(4, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	assertReplay := func(term uint64, votedFor string, entries int, snapshotIndex uint64) {
+		t.Helper()
+		state, err := Replay(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state.CurrentTerm != term || state.VotedFor != votedFor || len(state.Entries) != entries || state.Snapshot.LastIncludedIndex != snapshotIndex {
+			t.Fatalf("replay = %+v, entries=%d", state, len(state.Entries))
+		}
+	}
+	assertReplay(4, "n1", 0, 0)
+	if err := store.Append(LogEntry{Index: 1, Term: 4, Command: []byte("cmd")}); err != nil {
+		t.Fatal(err)
+	}
+	assertReplay(4, "n1", 1, 0)
+	if err := store.SaveSnapshot(Snapshot{LastIncludedIndex: 1, LastIncludedTerm: 4, State: []byte("state")}); err != nil {
+		t.Fatal(err)
+	}
+	assertReplay(4, "n1", 0, 1)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

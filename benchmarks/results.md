@@ -17,12 +17,14 @@ Environment:
 
 - OS/arch: Windows amd64
 - CPU: 12th Gen Intel(R) Core(TM) i7-12650H
-- Benchmark: deterministic in-process Raft proposal throughput
+- Go version: see `go version` on the test host
+- Benchmark: deterministic in-process autonomous Raft proposal throughput
+- Warm-up: automatic leader election plus 1,000 simulated events
 
 ```text
-BenchmarkRaftProposeThroughput/3_nodes-16    18780    121997 ns/op    2333 B/op    21 allocs/op
-BenchmarkRaftProposeThroughput/5_nodes-16    10000    127575 ns/op    3223 B/op    35 allocs/op
-BenchmarkRaftProposeThroughput/7_nodes-16    10000    184743 ns/op    4439 B/op    49 allocs/op
+BenchmarkRaftProposeThroughput/3_nodes-16    10000    124075 ns/op     9718 B/op     77 allocs/op
+BenchmarkRaftProposeThroughput/5_nodes-16    10000    243926 ns/op    18714 B/op    146 allocs/op
+BenchmarkRaftProposeThroughput/7_nodes-16    10000    367972 ns/op    28281 B/op    214 allocs/op
 ```
 
 ## Reproduction
@@ -37,3 +39,4 @@ go test ./benchmarks -bench . -benchmem
 The benchmark currently measures deterministic in-process Raft proposal
 throughput. It does not include kernel networking, TLS, disk WAL latency, or a
 production worker fleet.
+

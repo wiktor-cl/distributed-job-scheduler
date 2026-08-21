@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/jhinr/distributed-job-scheduler/internal/raft"
-	"github.com/jhinr/distributed-job-scheduler/internal/scheduler"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/raft"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/scheduler"
 )
 
 type Violation struct {
@@ -92,12 +92,36 @@ func LeaderCompleteness(nodes map[raft.NodeID]*raft.Node, committed map[uint64]r
 	return nil
 }
 
+func CommittedEntryDurability(nodes map[raft.NodeID]*raft.Node, committed map[uint64]raft.Entry) error {
+	for _, committedEntry := range committed {
+		for id, node := range nodes {
+			if node.CommitIndex() < committedEntry.Index {
+				continue
+			}
+			if committedEntry.Index <= node.Snapshot().LastIncludedIndex {
+				continue
+			}
+			for _, entry := range node.Entries() {
+				if entry.Index != committedEntry.Index {
+					continue
+				}
+				if entry.Term != committedEntry.Term || !bytes.Equal(entry.Command, committedEntry.Command) {
+					return Violation{Invariant: "Committed Entry Durability", Detail: fmt.Sprintf("node %s has different entry at committed index %d", id, committedEntry.Index)}
+				}
+				break
+			}
+		}
+	}
+	return nil
+}
+
 func RaftCluster(nodes map[raft.NodeID]*raft.Node, committed map[uint64]raft.Entry) error {
 	for _, check := range []func() error{
 		func() error { return ElectionSafety(nodes) },
 		func() error { return LogMatching(nodes) },
 		func() error { return StateMachineSafety(nodes) },
 		func() error { return LeaderCompleteness(nodes, committed) },
+		func() error { return CommittedEntryDurability(nodes, committed) },
 	} {
 		if err := check(); err != nil {
 			return err

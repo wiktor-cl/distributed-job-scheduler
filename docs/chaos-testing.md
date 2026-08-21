@@ -10,6 +10,8 @@ project.
 - `VirtualNetwork`: deterministic message delay, drop, reorder, duplication,
   and partition behavior.
 - `FailureInjector`: deterministic crash, pause, restart, and partition events.
+- `sim.Cluster`: runs the same autonomous `raft.Node` core through the
+  `raft.Transport` interface.
 - Invariant-based history verifier: checks recorded histories against Raft and
   scheduler invariants.
 
@@ -26,6 +28,13 @@ cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
 go test ./... -run TestChaos -count=1 -args -seed=48213
 ```
 
+Current single-seed command:
+
+```powershell
+cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
+go test ./internal/verify -run TestChaosSeed -count=1 -args -seed=48213
+```
+
 ## Bug Catalogue
 
 | Seed/test | Sequence | Broken invariant | Root cause | Fix |
@@ -38,3 +47,4 @@ go test ./... -run TestChaos -count=1 -args -seed=48213
 
 The chaos suite is invariant-based. It is not a full Knossos-style
 linearizability checker.
+

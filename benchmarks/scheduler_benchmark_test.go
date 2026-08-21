@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/jhinr/distributed-job-scheduler/internal/raft"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/raft"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/sim"
 )
 
 func BenchmarkRaftProposeThroughput(b *testing.B) {
@@ -14,14 +15,21 @@ func BenchmarkRaftProposeThroughput(b *testing.B) {
 			for i := range ids {
 				ids[i] = raft.NodeID(fmt.Sprintf("n%d", i+1))
 			}
-			cluster := raft.NewCluster(ids)
-			if ok, err := cluster.Elect("n1"); err != nil || !ok {
-				b.Fatalf("election ok=%v err=%v", ok, err)
+			cluster := sim.NewCluster(ids, int64(size))
+			if _, err := cluster.RunUntilLeader(5000); err != nil {
+				b.Fatal(err)
+			}
+			if err := cluster.RunEvents(1000); err != nil {
+				b.Fatal(err)
 			}
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				if _, committed, err := cluster.Propose([]byte(fmt.Sprintf("job-%d", i))); err != nil || !committed {
-					b.Fatalf("propose committed=%v err=%v", committed, err)
+				entry, err := cluster.Propose([]byte(fmt.Sprintf("job-%d", i)))
+				if err != nil {
+					b.Fatal(err)
+				}
+				if err := cluster.RunUntilCommitted(entry.Index, 50000); err != nil {
+					b.Fatal(err)
 				}
 			}
 		})

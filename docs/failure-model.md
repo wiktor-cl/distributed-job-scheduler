@@ -20,9 +20,9 @@ documented as verified behavior until implemented and tested.
 ## Verified Scope
 
 Crash/restart, partitions, message delay/drop/reorder/duplication primitives,
-and pause/kill controls exist in the deterministic harness. The current
-must-have tests exercise a compact subset of those faults through seed-driven
-chaos tests.
+and pause/kill controls exist in the deterministic harness. The current tests
+exercise automatic failover, quorum loss, lagging follower catch-up,
+snapshot-based recovery, and seed-driven randomized scenarios.
 
 ## Local Commands
 
@@ -30,3 +30,4 @@ chaos tests.
 cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
 go test ./...
 ```
+

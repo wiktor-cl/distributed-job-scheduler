@@ -5,17 +5,20 @@ Consensus Algorithm" by Ongaro and Ousterhout.
 
 ## Implemented Scope
 
-- Leader election through deterministic election requests in the cluster model.
+- Autonomous leader election through deterministic ticks and randomized election
+  deadlines.
 - `RequestVote` with the log up-to-date restriction from section 5.4.1.
 - `AppendEntries` log replication and conflict handling.
+- Heartbeats as empty `AppendEntries`.
+- `nextIndex` and `matchIndex` per follower with retry/backtracking.
 - Commit advancement following section 5.4.2: a leader commits an entry when it
   is stored on a majority of servers and the entry is from the leader's current
   term. Entries from previous terms are committed indirectly after a current-term
   entry is committed.
 - Persistent `currentTerm`, `votedFor`, and log entries before responding to
   RPCs whose safety depends on those writes.
-- Snapshot installation and log compaction in the deterministic model, following
-  section 7.
+- Snapshot installation and log compaction through normal replication flow,
+  following section 7.
 
 ## Required Invariants
 
@@ -38,5 +41,6 @@ go test ./internal/raft ./internal/verify
 ## Current Limitation
 
 The implementation is a deterministic library core, not a production RPC
-daemon. Election timeouts are represented by tests/simulation rather than a
-long-running network process.
+daemon. A real transport can implement `raft.Transport`, but that runtime is
+not implemented yet.
+

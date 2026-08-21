@@ -22,6 +22,8 @@ go test ./internal/scheduler ./internal/gateway ./internal/verify
 
 ## Verified Scope
 
-The guarantees are verified at the deterministic library/simulation layer. The
+The guarantees are verified at the deterministic library/simulation layer using
+the same autonomous Raft node core that a future real transport would wrap. The
 project does not claim exactly-once execution, full linearizability checking,
 or safety for direct writes that bypass the Storage Gateway.
+
