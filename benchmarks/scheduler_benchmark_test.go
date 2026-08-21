@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wiktor-cl/distributed-job-scheduler/internal/raft"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/scheduler"
 	"github.com/wiktor-cl/distributed-job-scheduler/internal/sim"
 )
 
@@ -24,7 +25,7 @@ func BenchmarkRaftProposeThroughput(b *testing.B) {
 			}
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				entry, err := cluster.Propose([]byte(fmt.Sprintf("job-%d", i)))
+				entry, err := cluster.ProposeScheduler(scheduler.Command{Type: scheduler.SubmitCommand, JobID: fmt.Sprintf("job-%d", i)})
 				if err != nil {
 					b.Fatal(err)
 				}

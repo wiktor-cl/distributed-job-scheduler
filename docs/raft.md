@@ -19,6 +19,9 @@ Consensus Algorithm" by Ongaro and Ousterhout.
   RPCs whose safety depends on those writes.
 - Snapshot installation and log compaction through normal replication flow,
   following section 7.
+- Generic `StateMachine` application: committed log commands are applied to a
+  per-node state machine, and snapshots are produced/restored through that
+  interface.
 
 ## Required Invariants
 

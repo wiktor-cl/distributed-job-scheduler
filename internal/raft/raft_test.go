@@ -5,19 +5,18 @@ import (
 	"testing"
 
 	"github.com/wiktor-cl/distributed-job-scheduler/internal/raft"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/scheduler"
+	"github.com/wiktor-cl/distributed-job-scheduler/internal/sim"
 	"github.com/wiktor-cl/distributed-job-scheduler/internal/verify"
 )
 
 func TestFiveNodeClusterElectsSingleLeader(t *testing.T) {
-	cluster := raft.NewCluster([]raft.NodeID{"n1", "n2", "n3", "n4", "n5"})
-	ok, err := cluster.Elect("n1")
+	cluster := sim.NewCluster([]raft.NodeID{"n1", "n2", "n3", "n4", "n5"}, 901)
+	_, err := cluster.RunUntilLeader(5000)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok {
-		t.Fatal("expected election to win")
-	}
-	if err := verify.ElectionSafety(cluster.Nodes()); err != nil {
+	if err := verify.ElectionSafety(cluster.LiveNodes()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -41,22 +40,58 @@ func TestRequestVoteRejectsCandidateWithStaleLog(t *testing.T) {
 	}
 }
 
-func TestLogReplicationCommitsCurrentTermEntryOnMajority(t *testing.T) {
-	cluster := raft.NewCluster([]raft.NodeID{"n1", "n2", "n3", "n4", "n5"})
-	if ok, err := cluster.Elect("n1"); err != nil || !ok {
-		t.Fatalf("election ok=%v err=%v", ok, err)
+func TestElectionDeadlineResetsAgainstLogicalNow(t *testing.T) {
+	node := raft.NewNodeWithConfig("n1", []raft.NodeID{"n1", "n2"}, raft.NewMemoryStorage(raft.PersistentState{}), nil, raft.NodeConfig{
+		ElectionTimeoutMin: 100,
+		ElectionTimeoutMax: 100,
+		Seed:               1,
+	})
+	if err := node.HandleAppendEntries("n2", raft.AppendEntriesRequest{
+		Term:         1,
+		LeaderID:     "n2",
+		PrevLogIndex: 0,
+		PrevLogTerm:  0,
+	}, 1000); err != nil {
+		t.Fatal(err)
 	}
-	entry, committed, err := cluster.Propose([]byte("job:submit:1"))
+	if node.ElectionDeadline() <= 1000 {
+		t.Fatalf("deadline reset against zero: got %d", node.ElectionDeadline())
+	}
+	if err := node.Tick(1001); err != nil {
+		t.Fatal(err)
+	}
+	if node.Role() != raft.Follower {
+		t.Fatalf("node started false election at time 1001; role=%s", node.Role())
+	}
+	if err := node.HandleRequestVote("n2", raft.RequestVoteRequest{
+		Term:         2,
+		CandidateID:  "n2",
+		LastLogIndex: 0,
+		LastLogTerm:  0,
+	}, 1000); err != nil {
+		t.Fatal(err)
+	}
+	if node.ElectionDeadline() <= 1000 {
+		t.Fatalf("vote request deadline reset against zero: got %d", node.ElectionDeadline())
+	}
+}
+
+func TestLogReplicationCommitsCurrentTermEntryOnMajority(t *testing.T) {
+	cluster := sim.NewCluster([]raft.NodeID{"n1", "n2", "n3", "n4", "n5"}, 902)
+	if _, err := cluster.RunUntilLeader(5000); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := cluster.ProposeScheduler(scheduler.Command{Type: scheduler.SubmitCommand, JobID: "job-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !committed {
-		t.Fatal("entry was not committed")
+	if err := cluster.RunUntilCommitted(entry.Index, 5000); err != nil {
+		t.Fatal(err)
 	}
 	if entry.Term == 0 || entry.Index != 1 {
 		t.Fatalf("entry = %+v", entry)
 	}
-	if err := verify.RaftCluster(cluster.Nodes(), cluster.Committed()); err != nil {
+	if err := verify.RaftCluster(cluster.LiveNodes(), cluster.CommittedEntries()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -135,46 +170,27 @@ func TestLeaderBacktracksNextIndexAndRepairsConflictingFollower(t *testing.T) {
 }
 
 func TestCrashRestartReplaysPersistentState(t *testing.T) {
-	cluster := raft.NewCluster([]raft.NodeID{"n1", "n2", "n3"})
-	if ok, err := cluster.Elect("n1"); err != nil || !ok {
-		t.Fatalf("election ok=%v err=%v", ok, err)
+	cluster := sim.NewCluster([]raft.NodeID{"n1", "n2", "n3"}, 903)
+	if _, err := cluster.RunUntilLeader(5000); err != nil {
+		t.Fatal(err)
 	}
-	if _, committed, err := cluster.Propose([]byte("job:submit:crash")); err != nil || !committed {
-		t.Fatalf("propose committed=%v err=%v", committed, err)
+	entry, err := cluster.ProposeScheduler(scheduler.Command{Type: scheduler.SubmitCommand, JobID: "job-crash"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	cluster.Kill("n2")
+	if err := cluster.RunUntilCommitted(entry.Index, 5000); err != nil {
+		t.Fatal(err)
+	}
+	cluster.Crash("n2")
 	cluster.Restart("n2")
-	if got := cluster.Nodes()["n2"].PersistentState().CurrentTerm; got != 1 {
+	if got := cluster.Nodes()["n2"].PersistentState().CurrentTerm; got == 0 {
 		t.Fatalf("term after restart = %d", got)
 	}
-	if err := cluster.ReplicateAll(); err != nil {
+	if err := cluster.RunUntilLogIndex("n2", entry.Index, 10000); err != nil {
 		t.Fatal(err)
 	}
-	if err := verify.RaftCluster(cluster.Nodes(), cluster.Committed()); err != nil {
+	if err := verify.RaftCluster(cluster.LiveNodes(), cluster.CommittedEntries()); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestSnapshotInstallCatchesUpLaggingFollower(t *testing.T) {
-	cluster := raft.NewCluster([]raft.NodeID{"n1", "n2", "n3"})
-	if ok, err := cluster.Elect("n1"); err != nil || !ok {
-		t.Fatalf("election ok=%v err=%v", ok, err)
-	}
-	cluster.Partition("n1", "n3")
-	for i := 0; i < 3; i++ {
-		if _, committed, err := cluster.Propose([]byte{byte('a' + i)}); err != nil || !committed {
-			t.Fatalf("propose %d committed=%v err=%v", i, committed, err)
-		}
-	}
-	if err := cluster.CompactLeader(2, []byte("snapshot-at-2")); err != nil {
-		t.Fatal(err)
-	}
-	cluster.Heal()
-	if err := cluster.InstallSnapshots(); err != nil {
-		t.Fatal(err)
-	}
-	if got := cluster.Nodes()["n3"].Snapshot().LastIncludedIndex; got != 2 {
-		t.Fatalf("snapshot index on lagging follower = %d", got)
 	}
 }
 
@@ -198,7 +214,7 @@ func (t *syncTransport) Drain(limit int) error {
 }
 
 func (t *syncTransport) SendRequestVote(from, to raft.NodeID, req raft.RequestVoteRequest) {
-	t.queue = append(t.queue, func() error { return t.nodes[to].HandleRequestVote(from, req) })
+	t.queue = append(t.queue, func() error { return t.nodes[to].HandleRequestVote(from, req, 0) })
 }
 
 func (t *syncTransport) SendRequestVoteResponse(from, to raft.NodeID, resp raft.RequestVoteResponse) {

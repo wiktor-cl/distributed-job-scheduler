@@ -1,8 +1,8 @@
 package scheduler
 
 import (
+	"encoding/json"
 	"fmt"
-	"math/rand"
 	"time"
 )
 
@@ -69,18 +69,84 @@ type Result struct {
 type StateMachine struct {
 	jobs      map[string]Job
 	nextToken uint64
-	rng       *rand.Rand
 }
 
 func NewStateMachine(seed int64) *StateMachine {
+	_ = seed
 	return &StateMachine{
 		jobs:      map[string]Job{},
 		nextToken: 1,
-		rng:       rand.New(rand.NewSource(seed)),
 	}
 }
 
-func (s *StateMachine) Apply(cmd Command) (Result, error) {
+type snapshot struct {
+	Jobs      map[string]Job `json:"jobs"`
+	NextToken uint64         `json:"next_token"`
+}
+
+func EncodeCommand(cmd Command) ([]byte, error) {
+	return json.Marshal(cmd)
+}
+
+func DecodeCommand(payload []byte) (Command, error) {
+	var cmd Command
+	if err := json.Unmarshal(payload, &cmd); err != nil {
+		return Command{}, err
+	}
+	return cmd, nil
+}
+
+func (s *StateMachine) ApplyBytes(payload []byte) error {
+	cmd, err := DecodeCommand(payload)
+	if err != nil {
+		return err
+	}
+	_, err = s.ApplyCommand(cmd)
+	return err
+}
+
+func (s *StateMachine) Apply(payload []byte) error {
+	return s.ApplyBytes(payload)
+}
+
+func (s *StateMachine) Snapshot() ([]byte, error) {
+	return json.Marshal(snapshot{Jobs: s.Jobs(), NextToken: s.nextToken})
+}
+
+func (s *StateMachine) Restore(payload []byte) error {
+	if len(payload) == 0 {
+		s.jobs = map[string]Job{}
+		s.nextToken = 1
+		return nil
+	}
+	var snap snapshot
+	if err := json.Unmarshal(payload, &snap); err != nil {
+		return err
+	}
+	s.jobs = map[string]Job{}
+	for id, job := range snap.Jobs {
+		s.jobs[id] = job
+	}
+	s.nextToken = snap.NextToken
+	if s.nextToken == 0 {
+		s.nextToken = 1
+	}
+	return nil
+}
+
+func (s *StateMachine) Fingerprint() string {
+	payload, err := s.Snapshot()
+	if err != nil {
+		return "error:" + err.Error()
+	}
+	return string(payload)
+}
+
+func (s *StateMachine) NextToken() uint64 {
+	return s.nextToken
+}
+
+func (s *StateMachine) ApplyCommand(cmd Command) (Result, error) {
 	switch cmd.Type {
 	case SubmitCommand:
 		return s.submit(cmd), nil
@@ -224,11 +290,7 @@ func (s *StateMachine) fail(cmd Command) Result {
 		if delay == 0 {
 			delay = int64(time.Second)
 		}
-		jitter := int64(0)
-		if cmd.BackoffJitter > 0 {
-			jitter = s.rng.Int63n(cmd.BackoffJitter + 1)
-		}
-		job.NextRetryAt = cmd.Now + delay*int64(1<<max(job.Attempts-1, 0)) + jitter
+		job.NextRetryAt = cmd.Now + delay*int64(1<<max(job.Attempts-1, 0)) + cmd.BackoffJitter
 	}
 	s.jobs[job.ID] = job
 	return Result{Job: job, Changed: true, Message: "failed attempt recorded"}

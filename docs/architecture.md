@@ -9,6 +9,10 @@ scheduler API
     |
 autonomous Raft node core
     |
+committed log application
+    |
+per-node scheduler state machine
+    |
 Storage Gateway -> external resource
 ```
 
@@ -31,6 +35,21 @@ raft.Node --> | raft.Transport     |
 External side effects are not made safe by Raft alone. Writes to external
 resources must pass through the Storage Gateway, which validates fencing tokens
 and rejects stale writers.
+
+Scheduler mutations follow one path:
+
+```text
+scheduler.Command
+  -> JSON command bytes
+  -> Raft proposal
+  -> quorum replication
+  -> commitIndex advancement
+  -> apply committed entry
+  -> scheduler.StateMachine.Apply
+```
+
+Every simulated node owns a separate scheduler state machine. Tests assert that
+nodes with the same `lastApplied` have identical scheduler snapshots.
 
 ## Local Commands
 

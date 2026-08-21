@@ -12,6 +12,8 @@ project.
 - `FailureInjector`: deterministic crash, pause, restart, and partition events.
 - `sim.Cluster`: runs the same autonomous `raft.Node` core through the
   `raft.Transport` interface.
+- Replicated scheduler commands: chaos operations that mutate jobs are proposed
+  through Raft and applied only after commit.
 - Invariant-based history verifier: checks recorded histories against Raft and
   scheduler invariants.
 

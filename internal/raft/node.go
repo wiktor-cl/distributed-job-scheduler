@@ -10,6 +10,7 @@ type Node struct {
 	peers     []NodeID
 	storage   Storage
 	transport Transport
+	fsm       StateMachine
 	rng       *rand.Rand
 	cfg       NodeConfig
 
@@ -22,6 +23,7 @@ type Node struct {
 	commitIndex uint64
 	lastApplied uint64
 	applied     map[uint64]Entry
+	applyError  error
 
 	nextIndex  map[NodeID]uint64
 	matchIndex map[NodeID]uint64
@@ -49,11 +51,15 @@ func NewNodeWithConfig(id NodeID, peers []NodeID, storage Storage, transport Tra
 		cfg.HeartbeatInterval = 50
 	}
 	state := storage.State()
+	if cfg.StateMachine != nil && len(state.Snapshot.State) > 0 {
+		_ = cfg.StateMachine.Restore(state.Snapshot.State)
+	}
 	n := &Node{
 		id:          id,
 		peers:       sortedNodeIDs(peers),
 		storage:     storage,
 		transport:   transport,
+		fsm:         cfg.StateMachine,
 		rng:         rand.New(rand.NewSource(cfg.Seed)),
 		cfg:         cfg,
 		role:        Follower,
@@ -73,6 +79,8 @@ func NewNodeWithConfig(id NodeID, peers []NodeID, storage Storage, transport Tra
 }
 
 func (n *Node) SetTransport(transport Transport) { n.transport = transport }
+func (n *Node) StateMachine() StateMachine       { return n.fsm }
+func (n *Node) ApplyError() error                { return n.applyError }
 
 func (n *Node) ID() NodeID                       { return n.id }
 func (n *Node) Role() Role                       { return n.role }
@@ -82,6 +90,7 @@ func (n *Node) CommitIndex() uint64              { return n.commitIndex }
 func (n *Node) LastApplied() uint64              { return n.lastApplied }
 func (n *Node) Entries() []Entry                 { return cloneEntries(n.log) }
 func (n *Node) Snapshot() Snapshot               { return n.snapshot }
+func (n *Node) ElectionDeadline() int64          { return n.electionDeadline }
 func (n *Node) KnownLeader() NodeID              { return n.knownLeader }
 func (n *Node) LeaderChanges() uint64            { return n.leaderChanges }
 func (n *Node) Elections() uint64                { return n.elections }
@@ -143,7 +152,11 @@ func (n *Node) BecomeLeader() {
 	n.becomeLeader(0)
 }
 
-func (n *Node) StepDown(term uint64) error {
+func (n *Node) StepDown(term uint64, at ...int64) error {
+	now := int64(0)
+	if len(at) > 0 {
+		now = at[0]
+	}
 	if term < n.currentTerm {
 		return nil
 	}
@@ -155,16 +168,16 @@ func (n *Node) StepDown(term uint64) error {
 	n.votedFor = ""
 	n.knownLeader = ""
 	n.votes = map[NodeID]bool{}
-	n.resetElectionDeadline(0)
+	n.resetElectionDeadline(now)
 	return n.storage.SaveTermVote(n.currentTerm, n.votedFor)
 }
 
 func (n *Node) RequestVote(req RequestVoteRequest) (RequestVoteResponse, error) {
-	return n.handleRequestVote(req)
+	return n.handleRequestVote(req, 0)
 }
 
-func (n *Node) HandleRequestVote(from NodeID, req RequestVoteRequest) error {
-	resp, err := n.handleRequestVote(req)
+func (n *Node) HandleRequestVote(from NodeID, req RequestVoteRequest, now int64) error {
+	resp, err := n.handleRequestVote(req, now)
 	if err != nil {
 		return err
 	}
@@ -176,7 +189,7 @@ func (n *Node) HandleRequestVote(from NodeID, req RequestVoteRequest) error {
 
 func (n *Node) HandleRequestVoteResponse(from NodeID, resp RequestVoteResponse, now int64) error {
 	if resp.Term > n.currentTerm {
-		return n.StepDown(resp.Term)
+		return n.StepDown(resp.Term, now)
 	}
 	if n.role != Candidate || resp.Term != n.currentTerm || !resp.VoteGranted {
 		return nil
@@ -203,9 +216,13 @@ func (n *Node) HandleAppendEntries(from NodeID, req AppendEntriesRequest, now in
 	return nil
 }
 
-func (n *Node) HandleAppendEntriesResponse(from NodeID, resp AppendEntriesResponse) error {
+func (n *Node) HandleAppendEntriesResponse(from NodeID, resp AppendEntriesResponse, at ...int64) error {
+	now := int64(0)
+	if len(at) > 0 {
+		now = at[0]
+	}
 	if resp.Term > n.currentTerm {
-		return n.StepDown(resp.Term)
+		return n.StepDown(resp.Term, now)
 	}
 	if n.role != Leader || resp.Term != n.currentTerm {
 		return nil
@@ -240,9 +257,13 @@ func (n *Node) HandleInstallSnapshot(from NodeID, req InstallSnapshotRequest, no
 	return nil
 }
 
-func (n *Node) HandleInstallSnapshotResponse(from NodeID, resp InstallSnapshotResponse) error {
+func (n *Node) HandleInstallSnapshotResponse(from NodeID, resp InstallSnapshotResponse, at ...int64) error {
+	now := int64(0)
+	if len(at) > 0 {
+		now = at[0]
+	}
 	if resp.Term > n.currentTerm {
-		return n.StepDown(resp.Term)
+		return n.StepDown(resp.Term, now)
 	}
 	if n.role != Leader || resp.Term != n.currentTerm {
 		return nil
@@ -273,13 +294,21 @@ func (n *Node) CommitThrough(index uint64) {
 	n.applyCommitted()
 }
 
-func (n *Node) Compact(index uint64, state []byte) error {
+func (n *Node) Compact(index uint64) error {
 	if index <= n.snapshot.LastIncludedIndex {
 		return nil
 	}
 	entry, ok := n.entryAt(index)
 	if !ok {
 		return fmt.Errorf("cannot compact missing index %d", index)
+	}
+	var state []byte
+	var err error
+	if n.fsm != nil {
+		state, err = n.fsm.Snapshot()
+		if err != nil {
+			return err
+		}
 	}
 	snapshot := Snapshot{LastIncludedIndex: index, LastIncludedTerm: entry.Term, State: append([]byte(nil), state...)}
 	if err := n.storage.SaveSnapshot(snapshot); err != nil {
@@ -298,12 +327,12 @@ func (n *Node) AppliedEntries() map[uint64]Entry {
 	return out
 }
 
-func (n *Node) handleRequestVote(req RequestVoteRequest) (RequestVoteResponse, error) {
+func (n *Node) handleRequestVote(req RequestVoteRequest, now int64) (RequestVoteResponse, error) {
 	if req.Term < n.currentTerm {
 		return RequestVoteResponse{Term: n.currentTerm}, nil
 	}
 	if req.Term > n.currentTerm {
-		if err := n.StepDown(req.Term); err != nil {
+		if err := n.StepDown(req.Term, now); err != nil {
 			return RequestVoteResponse{}, err
 		}
 	}
@@ -312,7 +341,7 @@ func (n *Node) handleRequestVote(req RequestVoteRequest) (RequestVoteResponse, e
 	canVote := n.votedFor == "" || n.votedFor == req.CandidateID
 	if canVote && upToDate {
 		n.votedFor = req.CandidateID
-		n.resetElectionDeadline(0)
+		n.resetElectionDeadline(now)
 		if err := n.storage.SaveTermVote(n.currentTerm, n.votedFor); err != nil {
 			return RequestVoteResponse{}, err
 		}
@@ -326,7 +355,7 @@ func (n *Node) handleAppendEntries(req AppendEntriesRequest, now int64) (AppendE
 		return AppendEntriesResponse{Term: n.currentTerm}, nil
 	}
 	if req.Term > n.currentTerm || n.role != Follower {
-		if err := n.StepDown(req.Term); err != nil {
+		if err := n.StepDown(req.Term, now); err != nil {
 			return AppendEntriesResponse{}, err
 		}
 	}
@@ -374,7 +403,7 @@ func (n *Node) handleInstallSnapshot(req InstallSnapshotRequest, now int64) (Ins
 		return InstallSnapshotResponse{Term: n.currentTerm}, nil
 	}
 	if req.Term > n.currentTerm || n.role != Follower {
-		if err := n.StepDown(req.Term); err != nil {
+		if err := n.StepDown(req.Term, now); err != nil {
 			return InstallSnapshotResponse{}, err
 		}
 	}
@@ -385,6 +414,11 @@ func (n *Node) handleInstallSnapshot(req InstallSnapshotRequest, now int64) (Ins
 	}
 	if err := n.storage.SaveSnapshot(req.Snapshot); err != nil {
 		return InstallSnapshotResponse{}, err
+	}
+	if n.fsm != nil {
+		if err := n.fsm.Restore(req.Snapshot.State); err != nil {
+			return InstallSnapshotResponse{}, err
+		}
 	}
 	n.snapshot = req.Snapshot
 	n.log = n.truncatePrefix(req.Snapshot.LastIncludedIndex)
@@ -566,6 +600,12 @@ func (n *Node) applyCommitted() {
 		entry, ok := n.entryAt(n.lastApplied)
 		if ok {
 			n.applied[n.lastApplied] = entry
+			if n.fsm != nil {
+				if err := n.fsm.Apply(entry.Command); err != nil {
+					n.applyError = err
+					return
+				}
+			}
 		}
 	}
 }

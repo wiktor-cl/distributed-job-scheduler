@@ -41,3 +41,19 @@ func TestCommittedEntryDurabilityRejectsDifferentEntryAtCommittedIndex(t *testin
 		t.Fatal("expected committed entry durability violation")
 	}
 }
+
+func TestCommittedEntryDurabilityRejectsMissingCommittedEntry(t *testing.T) {
+	node := raft.NewNode("n1", []raft.NodeID{"n1"}, raft.NewMemoryStorage(raft.PersistentState{
+		Snapshot: raft.Snapshot{LastIncludedIndex: 1, LastIncludedTerm: 1},
+		Entries:  []raft.Entry{{Index: 3, Term: 1, Command: []byte("three")}},
+	}))
+	node.CommitThrough(3)
+	err := CommittedEntryDurability(map[raft.NodeID]*raft.Node{
+		"n1": node,
+	}, map[uint64]raft.Entry{
+		2: {Index: 2, Term: 1, Command: []byte("two")},
+	})
+	if err == nil {
+		t.Fatal("expected missing committed entry durability violation")
+	}
+}

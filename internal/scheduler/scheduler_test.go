@@ -4,23 +4,23 @@ import "testing"
 
 func TestWorkerCrashBeforeCompletionRedeliversAfterLeaseExpiry(t *testing.T) {
 	sm := NewStateMachine(1)
-	if _, err := sm.Apply(Command{Type: SubmitCommand, JobID: "job-1", Payload: "send-email"}); err != nil {
+	if _, err := sm.ApplyCommand(Command{Type: SubmitCommand, JobID: "job-1", Payload: "send-email"}); err != nil {
 		t.Fatal(err)
 	}
-	first, err := sm.Apply(Command{Type: ClaimCommand, JobID: "job-1", WorkerID: "w1", Now: 10, LeaseDuration: 5})
+	first, err := sm.ApplyCommand(Command{Type: ClaimCommand, JobID: "job-1", WorkerID: "w1", Now: 10, LeaseDuration: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !first.Changed || first.Job.FencingToken != 1 {
 		t.Fatalf("first claim = %+v", first)
 	}
-	if _, err := sm.Apply(Command{Type: StartCommand, JobID: "job-1", WorkerID: "w1", Now: 11}); err != nil {
+	if _, err := sm.ApplyCommand(Command{Type: StartCommand, JobID: "job-1", WorkerID: "w1", Now: 11}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := sm.Apply(Command{Type: ExpireLeasesCommand, Now: 16}); err != nil {
+	if _, err := sm.ApplyCommand(Command{Type: ExpireLeasesCommand, Now: 16}); err != nil {
 		t.Fatal(err)
 	}
-	second, err := sm.Apply(Command{Type: ClaimCommand, JobID: "job-1", WorkerID: "w2", Now: 16, LeaseDuration: 5})
+	second, err := sm.ApplyCommand(Command{Type: ClaimCommand, JobID: "job-1", WorkerID: "w2", Now: 16, LeaseDuration: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,14 +31,14 @@ func TestWorkerCrashBeforeCompletionRedeliversAfterLeaseExpiry(t *testing.T) {
 
 func TestCompletionRetryIsIdempotentAfterAckLoss(t *testing.T) {
 	sm := NewStateMachine(1)
-	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-2", Payload: "charge"})
-	_, _ = sm.Apply(Command{Type: ClaimCommand, JobID: "job-2", WorkerID: "w1", Now: 1, LeaseDuration: 10})
-	_, _ = sm.Apply(Command{Type: StartCommand, JobID: "job-2", WorkerID: "w1", Now: 2})
-	first, err := sm.Apply(Command{Type: CompleteCommand, JobID: "job-2", WorkerID: "w1", Now: 3, CompletionToken: "token-abc"})
+	_, _ = sm.ApplyCommand(Command{Type: SubmitCommand, JobID: "job-2", Payload: "charge"})
+	_, _ = sm.ApplyCommand(Command{Type: ClaimCommand, JobID: "job-2", WorkerID: "w1", Now: 1, LeaseDuration: 10})
+	_, _ = sm.ApplyCommand(Command{Type: StartCommand, JobID: "job-2", WorkerID: "w1", Now: 2})
+	first, err := sm.ApplyCommand(Command{Type: CompleteCommand, JobID: "job-2", WorkerID: "w1", Now: 3, CompletionToken: "token-abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := sm.Apply(Command{Type: CompleteCommand, JobID: "job-2", WorkerID: "w1", Now: 4, CompletionToken: "token-abc"})
+	second, err := sm.ApplyCommand(Command{Type: CompleteCommand, JobID: "job-2", WorkerID: "w1", Now: 4, CompletionToken: "token-abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,10 +52,10 @@ func TestCompletionRetryIsIdempotentAfterAckLoss(t *testing.T) {
 
 func TestRetriesMoveToDeadLetterQueue(t *testing.T) {
 	sm := NewStateMachine(1)
-	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-3", MaxAttempts: 2})
-	_, _ = sm.Apply(Command{Type: FailCommand, JobID: "job-3", Now: 1, Error: "timeout", BackoffBase: 10})
-	_, _ = sm.Apply(Command{Type: RetryDueCommand, Now: 11})
-	_, _ = sm.Apply(Command{Type: FailCommand, JobID: "job-3", Now: 12, Error: "timeout again", BackoffBase: 10})
+	_, _ = sm.ApplyCommand(Command{Type: SubmitCommand, JobID: "job-3", MaxAttempts: 2})
+	_, _ = sm.ApplyCommand(Command{Type: FailCommand, JobID: "job-3", Now: 1, Error: "timeout", BackoffBase: 10})
+	_, _ = sm.ApplyCommand(Command{Type: RetryDueCommand, Now: 11})
+	_, _ = sm.ApplyCommand(Command{Type: FailCommand, JobID: "job-3", Now: 12, Error: "timeout again", BackoffBase: 10})
 	dlq := sm.DeadLetters()
 	if len(dlq) != 1 || dlq[0].ID != "job-3" || dlq[0].Error != "timeout again" {
 		t.Fatalf("dlq = %+v", dlq)
@@ -64,9 +64,9 @@ func TestRetriesMoveToDeadLetterQueue(t *testing.T) {
 
 func TestDLQAndCompletedJobsAreTerminal(t *testing.T) {
 	sm := NewStateMachine(1)
-	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-terminal", MaxAttempts: 1})
-	_, _ = sm.Apply(Command{Type: FailCommand, JobID: "job-terminal", Now: 1, Error: "boom"})
-	claim, err := sm.Apply(Command{Type: ClaimCommand, JobID: "job-terminal", WorkerID: "w1", Now: 2, LeaseDuration: 10})
+	_, _ = sm.ApplyCommand(Command{Type: SubmitCommand, JobID: "job-terminal", MaxAttempts: 1})
+	_, _ = sm.ApplyCommand(Command{Type: FailCommand, JobID: "job-terminal", Now: 1, Error: "boom"})
+	claim, err := sm.ApplyCommand(Command{Type: ClaimCommand, JobID: "job-terminal", WorkerID: "w1", Now: 2, LeaseDuration: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,11 +74,11 @@ func TestDLQAndCompletedJobsAreTerminal(t *testing.T) {
 		t.Fatalf("DLQ job changed on claim: %+v", claim)
 	}
 
-	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-completed"})
-	_, _ = sm.Apply(Command{Type: ClaimCommand, JobID: "job-completed", WorkerID: "w1", Now: 1, LeaseDuration: 10})
-	_, _ = sm.Apply(Command{Type: StartCommand, JobID: "job-completed", WorkerID: "w1", Now: 2})
-	_, _ = sm.Apply(Command{Type: CompleteCommand, JobID: "job-completed", WorkerID: "w1", Now: 3})
-	start, err := sm.Apply(Command{Type: StartCommand, JobID: "job-completed", WorkerID: "w1", Now: 4})
+	_, _ = sm.ApplyCommand(Command{Type: SubmitCommand, JobID: "job-completed"})
+	_, _ = sm.ApplyCommand(Command{Type: ClaimCommand, JobID: "job-completed", WorkerID: "w1", Now: 1, LeaseDuration: 10})
+	_, _ = sm.ApplyCommand(Command{Type: StartCommand, JobID: "job-completed", WorkerID: "w1", Now: 2})
+	_, _ = sm.ApplyCommand(Command{Type: CompleteCommand, JobID: "job-completed", WorkerID: "w1", Now: 3})
+	start, err := sm.ApplyCommand(Command{Type: StartCommand, JobID: "job-completed", WorkerID: "w1", Now: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,10 +89,10 @@ func TestDLQAndCompletedJobsAreTerminal(t *testing.T) {
 
 func TestFencingTokensAreStrictlyMonotonic(t *testing.T) {
 	sm := NewStateMachine(1)
-	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-4"})
-	a, _ := sm.Apply(Command{Type: ClaimCommand, JobID: "job-4", WorkerID: "w1", Now: 1, LeaseDuration: 1})
-	_, _ = sm.Apply(Command{Type: ExpireLeasesCommand, Now: 2})
-	b, _ := sm.Apply(Command{Type: ClaimCommand, JobID: "job-4", WorkerID: "w2", Now: 2, LeaseDuration: 1})
+	_, _ = sm.ApplyCommand(Command{Type: SubmitCommand, JobID: "job-4"})
+	a, _ := sm.ApplyCommand(Command{Type: ClaimCommand, JobID: "job-4", WorkerID: "w1", Now: 1, LeaseDuration: 1})
+	_, _ = sm.ApplyCommand(Command{Type: ExpireLeasesCommand, Now: 2})
+	b, _ := sm.ApplyCommand(Command{Type: ClaimCommand, JobID: "job-4", WorkerID: "w2", Now: 2, LeaseDuration: 1})
 	if b.Job.FencingToken <= a.Job.FencingToken {
 		t.Fatalf("tokens not monotonic: %d then %d", a.Job.FencingToken, b.Job.FencingToken)
 	}

@@ -17,8 +17,9 @@ The repository contains an autonomous deterministic implementation slice:
   entries, conflicting suffix repair, crash/restart over persistent state, and
   snapshot installation through the normal replication flow.
 - WAL: append-only JSONL persistence with fsync on every safety-critical write.
-- Scheduler state machine: submit, claim, start, complete, fail, retry, lease
-  expiry, DLQ, and idempotent completion.
+- Raft-replicated scheduler state machine: submit, claim, start, complete,
+  fail, retry, lease expiry, DLQ, and idempotent completion are serialized as
+  log commands and applied only after commit.
 - Storage Gateway: external resource writes guarded by fencing tokens.
 - Deterministic simulation primitives: virtual clock, virtual network, and
   failure injector.
@@ -49,7 +50,9 @@ go test ./internal/verify -run TestChaosSeed -count=1 -args -seed=48213
 
 ```powershell
 cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
-go run ./cmd/schedulerctl demo
+go run ./cmd/schedulerctl raft-demo
+go run ./cmd/schedulerctl snapshot-demo
+go run ./cmd/schedulerctl fencing-demo
 ```
 
 ## Project Layout
@@ -85,6 +88,7 @@ Implemented and verified:
 - Majority-only commit behavior.
 - Lagging follower catch-up with backtracking.
 - Snapshot plus remaining log catch-up.
+- Raft-replicated scheduler state convergence for equal `lastApplied`.
 - Scheduler terminal-state and idempotency behavior.
 - Fencing-token enforcement at the Storage Gateway.
 - WAL replay for term, vote, log entries, and snapshots.

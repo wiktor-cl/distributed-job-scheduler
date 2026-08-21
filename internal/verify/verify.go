@@ -101,16 +101,37 @@ func CommittedEntryDurability(nodes map[raft.NodeID]*raft.Node, committed map[ui
 			if committedEntry.Index <= node.Snapshot().LastIncludedIndex {
 				continue
 			}
+			found := false
 			for _, entry := range node.Entries() {
 				if entry.Index != committedEntry.Index {
 					continue
 				}
+				found = true
 				if entry.Term != committedEntry.Term || !bytes.Equal(entry.Command, committedEntry.Command) {
 					return Violation{Invariant: "Committed Entry Durability", Detail: fmt.Sprintf("node %s has different entry at committed index %d", id, committedEntry.Index)}
 				}
 				break
 			}
+			if !found {
+				return Violation{Invariant: "Committed Entry Durability", Detail: fmt.Sprintf("node %s is committed through %d but lacks entry %d", id, node.CommitIndex(), committedEntry.Index)}
+			}
 		}
+	}
+	return nil
+}
+
+func ReplicatedSchedulerStateEquality(nodes map[raft.NodeID]*raft.Node, schedulers map[raft.NodeID]*scheduler.StateMachine) error {
+	byApplied := map[uint64]string{}
+	for id, node := range nodes {
+		sm := schedulers[id]
+		if sm == nil {
+			continue
+		}
+		fingerprint := sm.Fingerprint()
+		if existing, ok := byApplied[node.LastApplied()]; ok && existing != fingerprint {
+			return Violation{Invariant: "Replicated Scheduler State Equality", Detail: fmt.Sprintf("node %s differs at lastApplied %d", id, node.LastApplied())}
+		}
+		byApplied[node.LastApplied()] = fingerprint
 	}
 	return nil
 }

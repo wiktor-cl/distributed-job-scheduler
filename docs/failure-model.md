@@ -20,9 +20,11 @@ documented as verified behavior until implemented and tested.
 ## Verified Scope
 
 Crash/restart, partitions, message delay/drop/reorder/duplication primitives,
-and pause/kill controls exist in the deterministic harness. The current tests
-exercise automatic failover, quorum loss, lagging follower catch-up,
-snapshot-based recovery, and seed-driven randomized scenarios.
+and pause controls exist in the deterministic harness. `Crash` is not graceful:
+it stops ticks and message processing without step-down or extra persistence.
+`GracefulStop` is separate. The current tests exercise automatic failover,
+quorum loss, lagging follower catch-up, snapshot-based recovery, replicated
+scheduler state convergence, and seed-driven randomized scenarios.
 
 ## Local Commands
 

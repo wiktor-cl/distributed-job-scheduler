@@ -14,6 +14,10 @@ The target state-machine guarantee is idempotent and serialized transition
 application. For example, a second `complete(job_id)` command must not produce a
 second logical completion effect when the job is already completed.
 
+Scheduler state transitions are replicated through Raft. A command mutates
+scheduler state only after it is a committed Raft log entry and is applied by
+the node's local scheduler state machine.
+
 This is not an exactly-once execution claim.
 
 ## Handler Layer
@@ -52,4 +56,6 @@ go test ./internal/scheduler ./internal/gateway
 - `TestRejectsStaleFencingToken`
 - `TestOldOwnerTokenRejectedAfterOwnershipChange`
 - `TestDLQAndCompletedJobsAreTerminal`
+- `TestSchedulerStateReplicatesThroughCommittedRaftLog`
+- `TestFencingTokenMonotonicAcrossFailoverAndRestart`
 

@@ -83,11 +83,18 @@ type Transport interface {
 	SendInstallSnapshotResponse(from, to NodeID, resp InstallSnapshotResponse)
 }
 
+type StateMachine interface {
+	Apply(command []byte) error
+	Snapshot() ([]byte, error)
+	Restore(snapshot []byte) error
+}
+
 type NodeConfig struct {
 	ElectionTimeoutMin int64
 	ElectionTimeoutMax int64
 	HeartbeatInterval  int64
 	Seed               int64
+	StateMachine       StateMachine
 }
 
 type Storage interface {

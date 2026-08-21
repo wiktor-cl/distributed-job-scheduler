@@ -1,7 +1,8 @@
 # Consistency Model
 
-The project targets a Raft-replicated state machine for scheduler metadata.
-State-machine transitions are serialized through committed Raft log entries.
+The project implements a Raft-replicated state machine for scheduler metadata.
+Scheduler transitions are serialized as Raft log commands and applied only after
+the corresponding entry is committed.
 
 The project does not claim exactly-once execution. The intended guarantee is:
 

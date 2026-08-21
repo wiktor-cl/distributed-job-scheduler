@@ -1,115 +1,125 @@
 # Final Report
 
-## Implemented
+## 1. Critical Issues Fixed
 
-- Refactored Raft into an autonomous event-driven `raft.Node`.
-- Added `raft.Transport` so core Raft does not know whether messages use a real
-  or simulated network.
-- Added `nextIndex` and `matchIndex` per follower.
-- Added automatic election timeout handling, RequestVote flow, heartbeats,
-  leader step-down on higher terms, replication retry/backtracking, and
-  current-term majority commit advancement.
-- Integrated `InstallSnapshot` into normal replication flow.
-- Reworked deterministic simulation so it runs the same Raft node code.
-- Added 1,000-seed randomized deterministic test coverage in normal tests and a
-  10,000-seed nightly CI command.
-- Added scheduler/gateway/WAL tests for terminal states, fencing, stale token
-  rejection, and crash-point replay.
+- Scheduler mutations now flow through Raft: scheduler commands are JSON encoded,
+  proposed to Raft, replicated, committed, then applied to each node's own
+  scheduler state machine.
+- `raft.Node` now owns a generic `StateMachine` interface; it does not import
+  the scheduler package.
+- Logical-time reset bugs were fixed by passing `now` into time-dependent RPC
+  handlers and step-down paths.
+- `Crash` no longer performs graceful cleanup or persists extra state.
+- Scheduler retry jitter is deterministic: any jitter value is part of the
+  replicated command, not locally generated per node.
+- Snapshots now contain serialized scheduler state via `StateMachine.Snapshot`.
+- `InstallSnapshot` restores scheduler state through `StateMachine.Restore`.
+- The old synchronous Raft `Cluster` helper was removed.
+- Chaos tests now mutate scheduler state through replicated scheduler commands.
+- `CommittedEntryDurability` fails when a node's `commitIndex` covers an entry
+  missing from both log and snapshot.
 
-## Architecture Changes
+## 2. Replicated Scheduler Architecture
 
-Raft is now event-driven. The simulator owns time and delivery, but consensus
-decisions live in `raft.Node`. `internal/sim.Cluster` implements `raft.Transport`
-with `VirtualNetwork`.
+```text
+client scheduler.Command
+    -> scheduler.EncodeCommand(JSON)
+    -> raft.Node.Propose
+    -> AppendEntries replication
+    -> current-term entry reaches majority
+    -> leader commitIndex advances
+    -> committed entry applied
+    -> scheduler.StateMachine.Apply(command bytes)
+    -> replicated scheduler state
+```
 
-## Guarantees Verified
+Each simulated Raft node owns its own scheduler state machine. Equal
+`lastApplied` indexes are checked for equal scheduler snapshots.
 
-- Election safety for live simulated nodes.
-- Majority requirement for commits.
-- Stale candidate rejection.
-- Step-down on higher term.
-- Automatic leader failover after killing a leader.
-- Log catch-up through `nextIndex` backtracking.
-- Conflicting follower suffix repair.
-- Snapshot installation plus remaining log replication.
-- Idempotent job completion.
-- DLQ/completed terminal behavior.
+## 3. Failure Semantics
+
+- `Crash(node)`: stops ticks and message processing immediately; no step-down or
+  extra persistence is performed.
+- `GracefulStop(node)`: intentionally steps down before stopping.
+- `Pause(node)`: stops execution without reconstructing the node.
+- `Restart(node)`: rebuilds volatile Raft state from persisted term, vote, log,
+  and snapshot; scheduler state is restored from snapshot and then catches up
+  through committed log entries.
+
+## 4. Invariants
+
+- Election Safety.
+- Log Matching.
+- Leader Completeness.
+- Committed Entry Durability.
+- State Machine Safety.
+- Replicated Scheduler State Equality.
+- Scheduler terminal-state invariants.
 - Monotonic fencing tokens.
-- Stale fencing token rejection at Storage Gateway.
-- WAL replay for term, vote, entries, and snapshot.
+- Stale fencing token rejection at the Storage Gateway.
 
-## Limitations
+## 5. Determinism
 
-- No production HTTP/gRPC/TCP cluster runtime is implemented yet.
-- No full Jepsen or Knossos-style linearizability checker.
+The replicated scheduler state machine does not read wall-clock time or generate
+local random jitter. Time (`Now`) and jitter/backoff values are command fields,
+therefore every node applies the same deterministic input from the log.
+
+## 6. Snapshot Semantics
+
+Raft compaction calls `StateMachine.Snapshot()` at the compacted index.
+`InstallSnapshot` persists the Raft snapshot, restores scheduler state from the
+snapshot bytes, sets `commitIndex`/`lastApplied`, and resumes normal log
+replication after the snapshot boundary.
+
+## 7. Tests
+
+- `TestSchedulerStateReplicatesThroughCommittedRaftLog`
+- `TestFencingTokenMonotonicAcrossFailoverAndRestart`
+- `TestSnapshotIsInstalledThroughReplicationFlow`
+- `TestElectionDeadlineResetsAgainstLogicalNow`
+- `TestCommittedEntryDurabilityRejectsMissingCommittedEntry`
+- `TestRandomizedDeterministicSeeds`
+- Existing Raft election, conflict repair, WAL replay, gateway, scheduler, and
+  deterministic simulation tests.
+
+## 8. Known Limitations
+
+- No production HTTP/gRPC/TCP runtime yet.
+- No full Jepsen/Knossos linearizability checker.
 - No Byzantine fault tolerance.
-- No storage corruption or torn-write handling.
+- No storage corruption or torn-write model.
 - No dynamic membership changes.
-- No exactly-once job execution claim.
+- No exactly-once execution guarantee.
 
-## Tests
-
-- `internal/sim`: autonomous leader election, failover, quorum loss, lagging
-  follower catch-up, snapshot catch-up.
-- `internal/raft`: RequestVote restrictions, conflict repair, WAL-backed
-  restart compatibility, snapshot unit behavior.
-- `internal/verify`: randomized deterministic scenario generation with seeds.
-- `internal/scheduler`: delivery/transition semantics, retries, DLQ.
-- `internal/gateway`: fencing-token enforcement.
-- `internal/wal`: replay and crash-point coverage.
-
-## Reproduction
+## 9. Commands Executed
 
 ```powershell
 cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
-go test ./internal/verify -run TestChaosSeed -count=1 -args -seed=48213
-```
-
-For the normal deterministic seed suite:
-
-```powershell
-cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
+go build ./...
+go vet ./...
+go test ./...
+go test -race ./...
 go test ./internal/verify -run TestRandomizedDeterministicSeeds -count=1 -args -seeds=1000
-```
-
-For a longer soak:
-
-```powershell
-cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
-go test ./internal/verify -run TestRandomizedDeterministicSeeds -count=1 -args -seeds=10000
-```
-
-## Benchmarks
-
-Benchmarks are reproducible with:
-
-```powershell
-cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
 go test ./benchmarks -bench . -benchmem
+go run ./cmd/schedulerctl raft-demo
+go run ./cmd/schedulerctl snapshot-demo
+go run ./cmd/schedulerctl fencing-demo
 ```
 
-Only locally measured results are listed in `benchmarks/results.md`.
+## 10. Senior-Review Checklist
 
-## Interview Demo
+HIGH severity findings: none known after this pass.
 
-1. Automatic leader failover:
+MEDIUM severity findings:
 
-```powershell
-cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
-go test ./internal/sim -run TestAutomaticLeaderElectionAndFailover -count=1 -v
-```
+- Real multi-process transport remains unimplemented.
+- Crash atomicity is limited to the current WAL/snapshot abstraction; storage
+  corruption is out of scope.
+- Race-mode randomized testing defaults to fewer seeds so full `go test -race
+  ./...` remains practical; normal tests and CI deterministic seed jobs run
+  1,000+ seeds.
 
-2. Lagging follower catches up through snapshot:
+LOW severity findings:
 
-```powershell
-cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
-go test ./internal/sim -run TestSnapshotIsInstalledThroughReplicationFlow -count=1 -v
-```
-
-3. Stale fencing token rejected after ownership change:
-
-```powershell
-cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
-go test ./internal/gateway -run TestOldOwnerTokenRejectedAfterOwnershipChange -count=1 -v
-```
-
+- Benchmark coverage is still focused on proposal throughput.
+- Demo commands are deterministic simulation demos, not production processes.
