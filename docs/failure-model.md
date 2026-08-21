@@ -17,10 +17,16 @@
 Storage corruption and membership changes are stretch goals. They must not be
 documented as verified behavior until implemented and tested.
 
+## Verified Scope
+
+Crash/restart, partitions, message delay/drop/reorder/duplication primitives,
+and pause/kill controls exist in the deterministic harness. The current
+must-have tests exercise a compact subset of those faults through seed-driven
+chaos tests.
+
 ## Local Commands
 
 ```powershell
 cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
 go test ./...
 ```
-

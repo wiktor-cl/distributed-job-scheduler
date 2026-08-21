@@ -1,0 +1,74 @@
+package scheduler
+
+import "testing"
+
+func TestWorkerCrashBeforeCompletionRedeliversAfterLeaseExpiry(t *testing.T) {
+	sm := NewStateMachine(1)
+	if _, err := sm.Apply(Command{Type: SubmitCommand, JobID: "job-1", Payload: "send-email"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := sm.Apply(Command{Type: ClaimCommand, JobID: "job-1", WorkerID: "w1", Now: 10, LeaseDuration: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Changed || first.Job.FencingToken != 1 {
+		t.Fatalf("first claim = %+v", first)
+	}
+	if _, err := sm.Apply(Command{Type: StartCommand, JobID: "job-1", WorkerID: "w1", Now: 11}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sm.Apply(Command{Type: ExpireLeasesCommand, Now: 16}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := sm.Apply(Command{Type: ClaimCommand, JobID: "job-1", WorkerID: "w2", Now: 16, LeaseDuration: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Changed || second.Job.Owner != "w2" || second.Job.FencingToken != 2 {
+		t.Fatalf("second claim = %+v", second)
+	}
+}
+
+func TestCompletionRetryIsIdempotentAfterAckLoss(t *testing.T) {
+	sm := NewStateMachine(1)
+	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-2", Payload: "charge"})
+	_, _ = sm.Apply(Command{Type: ClaimCommand, JobID: "job-2", WorkerID: "w1", Now: 1, LeaseDuration: 10})
+	_, _ = sm.Apply(Command{Type: StartCommand, JobID: "job-2", WorkerID: "w1", Now: 2})
+	first, err := sm.Apply(Command{Type: CompleteCommand, JobID: "job-2", WorkerID: "w1", Now: 3, CompletionToken: "token-abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := sm.Apply(Command{Type: CompleteCommand, JobID: "job-2", WorkerID: "w1", Now: 4, CompletionToken: "token-abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Changed || second.Changed {
+		t.Fatalf("completion changed flags first=%v second=%v", first.Changed, second.Changed)
+	}
+	if first.Job.CompletedAt != second.Job.CompletedAt || second.Job.CompletionToken != "token-abc" {
+		t.Fatalf("non-idempotent completion: first=%+v second=%+v", first.Job, second.Job)
+	}
+}
+
+func TestRetriesMoveToDeadLetterQueue(t *testing.T) {
+	sm := NewStateMachine(1)
+	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-3", MaxAttempts: 2})
+	_, _ = sm.Apply(Command{Type: FailCommand, JobID: "job-3", Now: 1, Error: "timeout", BackoffBase: 10})
+	_, _ = sm.Apply(Command{Type: RetryDueCommand, Now: 11})
+	_, _ = sm.Apply(Command{Type: FailCommand, JobID: "job-3", Now: 12, Error: "timeout again", BackoffBase: 10})
+	dlq := sm.DeadLetters()
+	if len(dlq) != 1 || dlq[0].ID != "job-3" || dlq[0].Error != "timeout again" {
+		t.Fatalf("dlq = %+v", dlq)
+	}
+}
+
+func TestFencingTokensAreStrictlyMonotonic(t *testing.T) {
+	sm := NewStateMachine(1)
+	_, _ = sm.Apply(Command{Type: SubmitCommand, JobID: "job-4"})
+	a, _ := sm.Apply(Command{Type: ClaimCommand, JobID: "job-4", WorkerID: "w1", Now: 1, LeaseDuration: 1})
+	_, _ = sm.Apply(Command{Type: ExpireLeasesCommand, Now: 2})
+	b, _ := sm.Apply(Command{Type: ClaimCommand, JobID: "job-4", WorkerID: "w2", Now: 2, LeaseDuration: 1})
+	if b.Job.FencingToken <= a.Job.FencingToken {
+		t.Fatalf("tokens not monotonic: %d then %d", a.Job.FencingToken, b.Job.FencingToken)
+	}
+}

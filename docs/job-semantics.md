@@ -43,8 +43,10 @@ cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
 go test ./internal/scheduler ./internal/gateway
 ```
 
-## Current Limitation
+## Verified Tests
 
-Phase 0 contains the documentation scaffold only. The semantics described here
-are not yet implemented.
-
+- `TestWorkerCrashBeforeCompletionRedeliversAfterLeaseExpiry`
+- `TestCompletionRetryIsIdempotentAfterAckLoss`
+- `TestRetriesMoveToDeadLetterQueue`
+- `TestFencingTokensAreStrictlyMonotonic`
+- `TestRejectsStaleFencingToken`

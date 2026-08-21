@@ -8,16 +8,21 @@ prioritizes precise, testable terminology over marketing claims. Until a
 guarantee is covered by tests and documented in the relevant phase, it is
 treated as planned work rather than completed behavior.
 
-## Current Phase
+## Current Status
 
-Phase 0 scaffold is in progress/completed:
+The repository contains a compact deterministic implementation slice:
 
-- Go module and directory layout
-- CI skeleton for build, vet, unit tests, deterministic simulation smoke tests,
-  and nightly chaos test configuration
-- Documentation structure and initial ADRs
-
-Phase 1 Raft implementation has not started in this scaffold commit.
+- Raft core: `RequestVote`, `AppendEntries`, majority commit for current-term
+  entries, conflicting suffix truncation, crash/restart over persistent state,
+  and snapshot installation.
+- WAL: append-only JSONL persistence with fsync on every safety-critical write.
+- Scheduler state machine: submit, claim, start, complete, fail, retry, lease
+  expiry, DLQ, and idempotent completion.
+- Storage Gateway: external resource writes guarded by fencing tokens.
+- Deterministic simulation primitives: virtual clock, virtual network, and
+  failure injector.
+- Verification: Raft invariants, job invariants, invariant-based history
+  verifier, deterministic chaos seed tests, and benchmarks.
 
 ## Local Commands
 
@@ -34,6 +39,16 @@ go vet ./...
 ```powershell
 cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
 go test ./...
+```
+
+```powershell
+cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
+go test ./internal/verify -run TestChaosSeed -count=1 -args -seed=48213
+```
+
+```powershell
+cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
+go run ./cmd/schedulerctl demo
 ```
 
 ## Project Layout
@@ -61,6 +76,8 @@ benchmarks/             benchmark methodology and results
 - Crash, partition, delay, reorder, duplicate-message, and pause coverage through
   deterministic simulation testing.
 
-These are project goals until the matching code, tests, and documentation are
-implemented in later phases.
+## Verified Scope
 
+The test suite covers the named invariants at the library/simulation layer. It
+does not claim a production network service, a full linearizability checker,
+Byzantine fault tolerance, storage corruption handling, or membership changes.

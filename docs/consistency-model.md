@@ -20,8 +20,8 @@ cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
 go test ./internal/scheduler ./internal/gateway ./internal/verify
 ```
 
-## Current Limitation
+## Verified Scope
 
-This document states target semantics. Phase 0 does not yet include the code or
-tests needed to claim them as implemented.
-
+The guarantees are verified at the deterministic library/simulation layer. The
+project does not claim exactly-once execution, full linearizability checking,
+or safety for direct writes that bypass the Storage Gateway.

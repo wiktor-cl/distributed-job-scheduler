@@ -3,9 +3,9 @@
 This project will implement Raft according to "In Search of an Understandable
 Consensus Algorithm" by Ongaro and Ousterhout.
 
-## Planned Scope
+## Implemented Scope
 
-- Leader election with randomized election timeouts.
+- Leader election through deterministic election requests in the cluster model.
 - `RequestVote` with the log up-to-date restriction from section 5.4.1.
 - `AppendEntries` log replication and conflict handling.
 - Commit advancement following section 5.4.2: a leader commits an entry when it
@@ -14,7 +14,7 @@ Consensus Algorithm" by Ongaro and Ousterhout.
   entry is committed.
 - Persistent `currentTerm`, `votedFor`, and log entries before responding to
   RPCs whose safety depends on those writes.
-- Snapshot installation and log compaction in the should-have phase, following
+- Snapshot installation and log compaction in the deterministic model, following
   section 7.
 
 ## Required Invariants
@@ -37,6 +37,6 @@ go test ./internal/raft ./internal/verify
 
 ## Current Limitation
 
-Phase 0 contains only scaffolding. The Raft implementation and tests are planned
-for Phase 1.
-
+The implementation is a deterministic library core, not a production RPC
+daemon. Election timeouts are represented by tests/simulation rather than a
+long-running network process.

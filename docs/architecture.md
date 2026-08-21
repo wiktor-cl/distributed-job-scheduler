@@ -23,9 +23,8 @@ cd C:\Users\jhinr\Downloads\projekty\distributed-job-scheduler
 go test ./...
 ```
 
-## Phase 0 Status
+## Implemented Status
 
-This document describes the intended architecture. Implementation details are
-not guaranteed until the corresponding phase has code, tests, and invariant
-coverage.
-
+The current code implements this architecture as a deterministic library and
+test harness. The production RPC boundary and worker fleet are intentionally
+left out of the verified scope.

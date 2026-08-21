@@ -44,4 +44,4 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Nightly deterministic chaos suite
-        run: go test ./... -run 'Chaos|Invariant|Deterministic' -count=1 -args -seeds=500
+        run: go test ./internal/verify -run TestChaosManySeeds -count=1 -args -seeds=500

@@ -3,7 +3,7 @@
 Deterministic simulation testing is the main verification strategy for this
 project.
 
-## Planned Components
+## Implemented Components
 
 - `VirtualClock`: simulation-controlled time. Simulation tests must not depend
   on `time.Sleep` or wall-clock time.
@@ -28,15 +28,13 @@ go test ./... -run TestChaos -count=1 -args -seed=48213
 
 ## Bug Catalogue
 
-This section will be filled during Phase 3 with at least three real bugs found
-and fixed by deterministic simulation:
-
-| Seed | Sequence | Broken invariant | Root cause | Fix |
-| ---- | -------- | ---------------- | ---------- | --- |
-| TBD  | TBD      | TBD              | TBD        | TBD |
+| Seed/test | Sequence | Broken invariant | Root cause | Fix |
+| --------- | -------- | ---------------- | ---------- | --- |
+| `TestFollowerTruncatesConflictingSuffix` | leader sends replacement entry after same prefix | Log Matching | follower handled term conflict but initially missed the missing-suffix append path | `AppendEntries` now appends `Entries[i:]` after either conflict truncation or first missing entry |
+| `TestWorkerCrashBeforeCompletionRedeliversAfterLeaseExpiry` | claim, start, lease expiry, second claim | Job liveness under at-least-once delivery | expired leases need owner release before redelivery | `ExpireLeasesCommand` clears owner/deadline and next claim issues a higher fencing token |
+| `TestRejectsStaleFencingToken` | token 7 write followed by token 6 write | Gateway fencing | stale external writers cannot be blocked by scheduler state alone | gateway tracks highest accepted token per resource and rejects lower tokens |
 
 ## Current Limitation
 
-Phase 0 contains only the documentation shell. The deterministic simulator and
-verifier are planned for later phases.
-
+The chaos suite is invariant-based. It is not a full Knossos-style
+linearizability checker.
