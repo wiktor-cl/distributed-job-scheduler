@@ -194,6 +194,51 @@ func TestCrashRestartReplaysPersistentState(t *testing.T) {
 	}
 }
 
+func TestCompactRejectsStateMachineSnapshotAtDifferentAppliedIndex(t *testing.T) {
+	sm := scheduler.NewStateMachine(1)
+	payload1, err := scheduler.EncodeCommand(scheduler.Command{Type: scheduler.SubmitCommand, JobID: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload2, err := scheduler.EncodeCommand(scheduler.Command{Type: scheduler.SubmitCommand, JobID: "two"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := raft.NewNodeWithConfig("n1", []raft.NodeID{"n1"}, raft.NewMemoryStorage(raft.PersistentState{
+		Entries: []raft.Entry{
+			{Index: 1, Term: 1, Command: payload1},
+			{Index: 2, Term: 1, Command: payload2},
+		},
+	}), nil, raft.NodeConfig{StateMachine: sm})
+	node.CommitThrough(2)
+	if err := node.Compact(1); err == nil {
+		t.Fatal("expected compaction below lastApplied to be rejected for state machine snapshot")
+	}
+	if err := node.Compact(2); err != nil {
+		t.Fatalf("compact at lastApplied rejected: %v", err)
+	}
+}
+
+func TestApplyErrorDoesNotAdvanceLastApplied(t *testing.T) {
+	sm := &rejectingStateMachine{}
+	node := raft.NewNodeWithConfig("n1", []raft.NodeID{"n1"}, raft.NewMemoryStorage(raft.PersistentState{
+		Entries: []raft.Entry{{Index: 1, Term: 1, Command: []byte("bad")}},
+	}), nil, raft.NodeConfig{StateMachine: sm})
+	node.CommitThrough(1)
+	if node.ApplyError() == nil {
+		t.Fatal("expected state machine apply error")
+	}
+	if node.LastApplied() != 0 {
+		t.Fatalf("lastApplied advanced after failed apply: %d", node.LastApplied())
+	}
+}
+
+type rejectingStateMachine struct{}
+
+func (rejectingStateMachine) Apply([]byte) error        { return testingError("reject") }
+func (rejectingStateMachine) Snapshot() ([]byte, error) { return nil, nil }
+func (rejectingStateMachine) Restore([]byte) error      { return nil }
+
 type syncTransport struct {
 	nodes map[raft.NodeID]*raft.Node
 	queue []func() error

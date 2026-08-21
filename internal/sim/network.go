@@ -39,6 +39,11 @@ func NewVirtualNetwork(clock Clock, cfg NetworkConfig) *VirtualNetwork {
 	}
 }
 
+func (n *VirtualNetwork) SetFaults(dropPermille, dupePermille int) {
+	n.cfg.DropPermille = dropPermille
+	n.cfg.DupePermille = dupePermille
+}
+
 func (n *VirtualNetwork) Register(node string, handler func(Message)) {
 	n.handlers[node] = handler
 }

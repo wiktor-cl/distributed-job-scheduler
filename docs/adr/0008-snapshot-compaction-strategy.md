@@ -11,6 +11,10 @@ Leaders send `InstallSnapshot` through normal replication when
 `nextIndex[follower] <= snapshot.LastIncludedIndex`. After installation, normal
 AppendEntries resumes from the next index.
 
+State-machine compaction is allowed only at the node's current `lastApplied`
+index. The scheduler FSM can serialize current state, but it cannot reconstruct
+historical state for an arbitrary older log index.
+
 ## Consequences
 
 Lagging followers can recover from compaction without a manual
@@ -21,4 +25,3 @@ remaining log catch-up.
 
 - Manual snapshot installation from the harness: easy, but not representative.
 - No compaction: simpler, but does not answer long-running log growth concerns.
-

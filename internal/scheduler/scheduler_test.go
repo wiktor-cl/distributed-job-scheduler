@@ -1,6 +1,9 @@
 package scheduler
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestWorkerCrashBeforeCompletionRedeliversAfterLeaseExpiry(t *testing.T) {
 	sm := NewStateMachine(1)
@@ -95,5 +98,34 @@ func TestFencingTokensAreStrictlyMonotonic(t *testing.T) {
 	b, _ := sm.ApplyCommand(Command{Type: ClaimCommand, JobID: "job-4", WorkerID: "w2", Now: 2, LeaseDuration: 1})
 	if b.Job.FencingToken <= a.Job.FencingToken {
 		t.Fatalf("tokens not monotonic: %d then %d", a.Job.FencingToken, b.Job.FencingToken)
+	}
+}
+
+func TestMalformedReplicatedCommandIsRejectedBeforeMutation(t *testing.T) {
+	sm := NewStateMachine(1)
+	if err := sm.Apply([]byte(`{"Type":"claim","JobID":"bad","WorkerID":"w","Now":1,"LeaseDuration":-1}`)); err == nil {
+		t.Fatal("expected malformed lease duration to be rejected")
+	}
+	if _, ok := sm.Job("bad"); ok {
+		t.Fatal("malformed command mutated scheduler state")
+	}
+	if err := sm.Apply([]byte(`{"Type":"unknown","JobID":"bad"}`)); err == nil {
+		t.Fatal("expected unknown command to be rejected")
+	}
+}
+
+func TestSnapshotRestoreRejectsLostFencingTokenMetadata(t *testing.T) {
+	payload, err := json.Marshal(snapshot{
+		Jobs: map[string]Job{
+			"j1": {ID: "j1", Status: Claimed, Owner: "w1", FencingToken: 4, LeaseUntil: 10},
+		},
+		NextToken: 4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm := NewStateMachine(1)
+	if err := sm.Restore(payload); err == nil {
+		t.Fatal("expected snapshot with stale next token to be rejected")
 	}
 }

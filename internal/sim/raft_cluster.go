@@ -29,6 +29,7 @@ type Cluster struct {
 	stores       map[raft.NodeID]*raft.MemoryStorage
 	alive        map[raft.NodeID]bool
 	paused       map[raft.NodeID]bool
+	tickGen      map[raft.NodeID]uint64
 	tickInterval int64
 	events       []string
 }
@@ -44,6 +45,7 @@ func NewCluster(ids []raft.NodeID, seed int64) *Cluster {
 		stores:       map[raft.NodeID]*raft.MemoryStorage{},
 		alive:        map[raft.NodeID]bool{},
 		paused:       map[raft.NodeID]bool{},
+		tickGen:      map[raft.NodeID]uint64{},
 		tickInterval: defaultTickInterval,
 	}
 	cluster.network = NewVirtualNetwork(clock, NetworkConfig{MinDelay: 1, MaxDelay: 5, Seed: seed})
@@ -62,7 +64,7 @@ func NewCluster(ids []raft.NodeID, seed int64) *Cluster {
 		}
 		cluster.nodes[id] = raft.NewNodeWithConfig(id, cluster.ids, store, cluster, cfg)
 		cluster.register(id)
-		cluster.scheduleTick(id, int64(i))
+		cluster.scheduleTick(id, int64(i), cluster.tickGen[id])
 	}
 	return cluster
 }
@@ -98,6 +100,26 @@ func (c *Cluster) CommittedEntries() map[uint64]raft.Entry {
 }
 
 func (c *Cluster) Clock() *VirtualClock { return c.clock }
+
+func (c *Cluster) SetNetworkFaults(dropPermille, dupePermille int) {
+	c.network.SetFaults(dropPermille, dupePermille)
+}
+
+func (c *Cluster) EventHistory() []string {
+	out := append([]string(nil), c.events...)
+	for _, item := range c.clock.Trace() {
+		out = append(out, "clock:"+item)
+	}
+	return out
+}
+
+func (c *Cluster) DeliveredMessages() []Message {
+	return c.network.Delivered()
+}
+
+func (c *Cluster) DroppedMessages() []Message {
+	return c.network.Dropped()
+}
 
 func (c *Cluster) Nodes() map[raft.NodeID]*raft.Node {
 	out := make(map[raft.NodeID]*raft.Node, len(c.nodes))
@@ -240,6 +262,8 @@ func (c *Cluster) Kill(id raft.NodeID) { c.Crash(id) }
 func (c *Cluster) Restart(id raft.NodeID) {
 	c.alive[id] = true
 	c.paused[id] = false
+	c.tickGen[id]++
+	generation := c.tickGen[id]
 	old := c.nodes[id]
 	fsm := scheduler.NewStateMachine(c.seed + int64(len(c.events)+1)*313)
 	c.schedulers[id] = fsm
@@ -250,7 +274,7 @@ func (c *Cluster) Restart(id raft.NodeID) {
 		c.events = append(c.events, fmt.Sprintf("restart former-leader %s", id))
 	}
 	c.register(id)
-	c.scheduleTick(id, 0)
+	c.scheduleTick(id, 0, generation)
 }
 
 func (c *Cluster) Pause(id raft.NodeID)  { c.paused[id] = true }
@@ -322,11 +346,14 @@ func (c *Cluster) register(id raft.NodeID) {
 	})
 }
 
-func (c *Cluster) scheduleTick(id raft.NodeID, delay int64) {
+func (c *Cluster) scheduleTick(id raft.NodeID, delay int64, generation uint64) {
 	c.clock.Schedule(delay, "tick:"+string(id), func() {
+		if c.tickGen[id] != generation {
+			return
+		}
 		if c.alive[id] && !c.paused[id] {
 			_ = c.nodes[id].Tick(c.clock.Now())
 		}
-		c.scheduleTick(id, c.tickInterval)
+		c.scheduleTick(id, c.tickInterval, generation)
 	})
 }

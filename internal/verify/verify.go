@@ -40,12 +40,16 @@ func LogMatching(nodes map[raft.NodeID]*raft.Node) error {
 			}
 			aEntries := a.Entries()
 			bEntries := b.Entries()
+			if err := snapshotBoundaryCompatible(aID, a, bID, b); err != nil {
+				return err
+			}
 			for _, ae := range aEntries {
 				for _, be := range bEntries {
 					if ae.Index != be.Index || ae.Term != be.Term {
 						continue
 					}
-					if err := prefixesEqual(aEntries, bEntries, ae.Index); err != nil {
+					floor := maxUint64(a.Snapshot().LastIncludedIndex, b.Snapshot().LastIncludedIndex)
+					if err := prefixesEqual(aEntries, bEntries, floor, ae.Index); err != nil {
 						return Violation{Invariant: "Log Matching", Detail: fmt.Sprintf("%s/%s index %d: %v", aID, bID, ae.Index, err)}
 					}
 				}
@@ -87,6 +91,9 @@ func LeaderCompleteness(nodes map[raft.NodeID]*raft.Node, committed map[uint64]r
 			if !found && committedEntry.Index > node.Snapshot().LastIncludedIndex {
 				return Violation{Invariant: "Leader Completeness", Detail: fmt.Sprintf("leader %s lacks committed entry %d", id, committedEntry.Index)}
 			}
+			if !found && committedEntry.Index == node.Snapshot().LastIncludedIndex && committedEntry.Term != node.Snapshot().LastIncludedTerm {
+				return Violation{Invariant: "Leader Completeness", Detail: fmt.Sprintf("leader %s snapshot boundary term %d differs from committed entry %d term %d", id, node.Snapshot().LastIncludedTerm, committedEntry.Index, committedEntry.Term)}
+			}
 		}
 	}
 	return nil
@@ -98,7 +105,13 @@ func CommittedEntryDurability(nodes map[raft.NodeID]*raft.Node, committed map[ui
 			if node.CommitIndex() < committedEntry.Index {
 				continue
 			}
-			if committedEntry.Index <= node.Snapshot().LastIncludedIndex {
+			if committedEntry.Index < node.Snapshot().LastIncludedIndex {
+				continue
+			}
+			if committedEntry.Index == node.Snapshot().LastIncludedIndex {
+				if committedEntry.Term != node.Snapshot().LastIncludedTerm {
+					return Violation{Invariant: "Committed Entry Durability", Detail: fmt.Sprintf("node %s snapshot boundary term %d differs from committed entry %d term %d", id, node.Snapshot().LastIncludedTerm, committedEntry.Index, committedEntry.Term)}
+				}
 				continue
 			}
 			found := false
@@ -195,15 +208,15 @@ func History(events []HistoryEvent) error {
 	return nil
 }
 
-func prefixesEqual(a, b []raft.Entry, through uint64) error {
+func prefixesEqual(a, b []raft.Entry, after, through uint64) error {
 	byIndex := map[uint64]raft.Entry{}
 	for _, entry := range a {
-		if entry.Index <= through {
+		if entry.Index > after && entry.Index <= through {
 			byIndex[entry.Index] = entry
 		}
 	}
 	for _, entry := range b {
-		if entry.Index > through {
+		if entry.Index <= after || entry.Index > through {
 			continue
 		}
 		other, ok := byIndex[entry.Index]
@@ -212,6 +225,43 @@ func prefixesEqual(a, b []raft.Entry, through uint64) error {
 		}
 		if other.Term != entry.Term || !bytes.Equal(other.Command, entry.Command) {
 			return fmt.Errorf("different entry at index %d", entry.Index)
+		}
+	}
+	return nil
+}
+
+func maxUint64(a, b uint64) uint64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func snapshotBoundaryCompatible(aID raft.NodeID, a *raft.Node, bID raft.NodeID, b *raft.Node) error {
+	aSnap := a.Snapshot()
+	bSnap := b.Snapshot()
+	if aSnap.LastIncludedIndex > 0 && aSnap.LastIncludedIndex == bSnap.LastIncludedIndex && aSnap.LastIncludedTerm != bSnap.LastIncludedTerm {
+		return Violation{Invariant: "Log Matching", Detail: fmt.Sprintf("%s/%s snapshot index %d has terms %d/%d", aID, bID, aSnap.LastIncludedIndex, aSnap.LastIncludedTerm, bSnap.LastIncludedTerm)}
+	}
+	if err := snapshotMatchesVisibleEntries(aID, aSnap, bID, b); err != nil {
+		return err
+	}
+	if err := snapshotMatchesVisibleEntries(bID, bSnap, aID, a); err != nil {
+		return err
+	}
+	return nil
+}
+
+func snapshotMatchesVisibleEntries(snapshotNode raft.NodeID, snapshot raft.Snapshot, logNode raft.NodeID, node *raft.Node) error {
+	if snapshot.LastIncludedIndex == 0 {
+		return nil
+	}
+	if node.CommitIndex() < snapshot.LastIncludedIndex {
+		return nil
+	}
+	for _, entry := range node.Entries() {
+		if entry.Index == snapshot.LastIncludedIndex && entry.Term != snapshot.LastIncludedTerm {
+			return Violation{Invariant: "Log Matching", Detail: fmt.Sprintf("%s snapshot index %d term %d conflicts with %s log term %d", snapshotNode, snapshot.LastIncludedIndex, snapshot.LastIncludedTerm, logNode, entry.Term)}
 		}
 	}
 	return nil

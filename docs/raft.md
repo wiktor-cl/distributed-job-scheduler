@@ -1,6 +1,6 @@
 # Raft
 
-This project will implement Raft according to "In Search of an Understandable
+This project implements a deterministic Raft core following "In Search of an Understandable
 Consensus Algorithm" by Ongaro and Ousterhout.
 
 ## Implemented Scope
@@ -18,7 +18,9 @@ Consensus Algorithm" by Ongaro and Ousterhout.
 - Persistent `currentTerm`, `votedFor`, and log entries before responding to
   RPCs whose safety depends on those writes.
 - Snapshot installation and log compaction through normal replication flow,
-  following section 7.
+  following section 7. State-machine snapshots are taken only at the node's
+  current `lastApplied` boundary because the FSM interface exposes current
+  state, not historical state.
 - Generic `StateMachine` application: committed log commands are applied to a
   per-node state machine, and snapshots are produced/restored through that
   interface.

@@ -80,6 +80,13 @@ benchmarks/             benchmark methodology and results
 - Crash, partition, delay, reorder, duplicate-message, and pause coverage through
   deterministic simulation testing.
 
+Not claimed:
+
+- Linearizable scheduler reads. The current code exposes local applied state in
+  tests and demos; it does not implement ReadIndex, leader leases, or read
+  quorum.
+- Exactly-once job execution.
+
 ## Verified Scope
 
 Implemented and verified:
@@ -93,6 +100,8 @@ Implemented and verified:
 - Fencing-token enforcement at the Storage Gateway.
 - WAL replay for term, vote, log entries, and snapshots.
 - 1,000 deterministic randomized seeds in normal tests.
+- Failing chaos seeds can be reproduced with
+  `go test ./internal/verify -run TestChaosSeed -count=1 -args -seed=<seed>`.
 
 Implemented but limited:
 
@@ -109,7 +118,6 @@ Planned / stretch:
 
 Explicitly out of scope:
 
-- Exactly-once job execution.
 - Byzantine fault tolerance.
 - Production-ready deployment claims.
 

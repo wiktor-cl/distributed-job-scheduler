@@ -63,12 +63,17 @@ func snapshotDemo() {
 	}
 	cluster.Pause(lagging)
 	isolate(cluster, lagging)
-	for i := 0; i < 25; i++ {
+	for i := 0; i < 20; i++ {
 		entry, err := cluster.ProposeScheduler(scheduler.Command{Type: scheduler.SubmitCommand, JobID: fmt.Sprintf("snapshot-demo-%02d", i)})
 		must(err)
 		must(cluster.RunUntilCommitted(entry.Index, 5000))
 	}
 	must(cluster.CompactLeader(20))
+	for i := 20; i < 25; i++ {
+		entry, err := cluster.ProposeScheduler(scheduler.Command{Type: scheduler.SubmitCommand, JobID: fmt.Sprintf("snapshot-demo-%02d", i)})
+		must(err)
+		must(cluster.RunUntilCommitted(entry.Index, 5000))
+	}
 	cluster.Heal()
 	cluster.Resume(lagging)
 	_, err = cluster.RunUntilLeader(10000)

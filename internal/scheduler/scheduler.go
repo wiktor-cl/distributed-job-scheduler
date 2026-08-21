@@ -3,6 +3,7 @@ package scheduler
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -93,6 +94,9 @@ func DecodeCommand(payload []byte) (Command, error) {
 	if err := json.Unmarshal(payload, &cmd); err != nil {
 		return Command{}, err
 	}
+	if err := validateCommand(cmd); err != nil {
+		return Command{}, err
+	}
 	return cmd, nil
 }
 
@@ -123,14 +127,24 @@ func (s *StateMachine) Restore(payload []byte) error {
 	if err := json.Unmarshal(payload, &snap); err != nil {
 		return err
 	}
+	nextToken := snap.NextToken
+	if nextToken == 0 {
+		nextToken = 1
+	}
 	s.jobs = map[string]Job{}
 	for id, job := range snap.Jobs {
+		if id == "" || job.ID == "" || id != job.ID {
+			return fmt.Errorf("invalid snapshot job id %q/%q", id, job.ID)
+		}
+		if job.Owner != "" && job.FencingToken == 0 {
+			return fmt.Errorf("invalid snapshot job %s: owner without fencing token", id)
+		}
+		if job.FencingToken >= nextToken {
+			return fmt.Errorf("invalid snapshot next token %d behind job %s token %d", nextToken, id, job.FencingToken)
+		}
 		s.jobs[id] = job
 	}
-	s.nextToken = snap.NextToken
-	if s.nextToken == 0 {
-		s.nextToken = 1
-	}
+	s.nextToken = nextToken
 	return nil
 }
 
@@ -147,6 +161,9 @@ func (s *StateMachine) NextToken() uint64 {
 }
 
 func (s *StateMachine) ApplyCommand(cmd Command) (Result, error) {
+	if err := validateCommand(cmd); err != nil {
+		return Result{}, err
+	}
 	switch cmd.Type {
 	case SubmitCommand:
 		return s.submit(cmd), nil
@@ -182,7 +199,8 @@ func (s *StateMachine) Jobs() map[string]Job {
 
 func (s *StateMachine) DeadLetters() []Job {
 	var out []Job
-	for _, job := range s.jobs {
+	for _, id := range sortedJobIDs(s.jobs) {
+		job := s.jobs[id]
 		if job.Status == DLQ {
 			out = append(out, job)
 		}
@@ -212,7 +230,7 @@ func (s *StateMachine) submit(cmd Command) Result {
 func (s *StateMachine) claim(cmd Command) (Result, error) {
 	job, ok := s.jobs[cmd.JobID]
 	if !ok {
-		return Result{}, fmt.Errorf("missing job %s", cmd.JobID)
+		return Result{Message: fmt.Sprintf("missing job %s", cmd.JobID)}, nil
 	}
 	if job.Status == Completed || job.Status == DLQ {
 		return Result{Job: job, Message: "terminal job not claimable"}, nil
@@ -234,7 +252,7 @@ func (s *StateMachine) claim(cmd Command) (Result, error) {
 func (s *StateMachine) start(cmd Command) (Result, error) {
 	job, ok := s.jobs[cmd.JobID]
 	if !ok {
-		return Result{}, fmt.Errorf("missing job %s", cmd.JobID)
+		return Result{Message: fmt.Sprintf("missing job %s", cmd.JobID)}, nil
 	}
 	if job.Status == Completed || job.Status == DLQ {
 		return Result{Job: job, Message: "terminal job not startable"}, nil
@@ -250,7 +268,7 @@ func (s *StateMachine) start(cmd Command) (Result, error) {
 func (s *StateMachine) complete(cmd Command) (Result, error) {
 	job, ok := s.jobs[cmd.JobID]
 	if !ok {
-		return Result{}, fmt.Errorf("missing job %s", cmd.JobID)
+		return Result{Message: fmt.Sprintf("missing job %s", cmd.JobID)}, nil
 	}
 	if job.Status == Completed {
 		return Result{Job: job, Message: "idempotent complete"}, nil
@@ -299,7 +317,8 @@ func (s *StateMachine) fail(cmd Command) Result {
 func (s *StateMachine) expire(cmd Command) Result {
 	changed := false
 	var last Job
-	for id, job := range s.jobs {
+	for _, id := range sortedJobIDs(s.jobs) {
+		job := s.jobs[id]
 		if (job.Status == Claimed || job.Status == Running) && job.LeaseUntil <= cmd.Now {
 			job.Owner = ""
 			job.LeaseUntil = 0
@@ -314,7 +333,8 @@ func (s *StateMachine) expire(cmd Command) Result {
 func (s *StateMachine) retryDue(cmd Command) Result {
 	changed := false
 	var last Job
-	for id, job := range s.jobs {
+	for _, id := range sortedJobIDs(s.jobs) {
+		job := s.jobs[id]
 		if job.Status == Failed && job.NextRetryAt <= cmd.Now {
 			job.Status = Pending
 			job.NextRetryAt = 0
@@ -330,4 +350,58 @@ func (s *StateMachine) nextFence() uint64 {
 	token := s.nextToken
 	s.nextToken++
 	return token
+}
+
+func validateCommand(cmd Command) error {
+	if cmd.Now < 0 {
+		return fmt.Errorf("negative logical time %d", cmd.Now)
+	}
+	if cmd.MaxAttempts < 0 {
+		return fmt.Errorf("negative max attempts %d", cmd.MaxAttempts)
+	}
+	if cmd.LeaseDuration < 0 {
+		return fmt.Errorf("negative lease duration %d", cmd.LeaseDuration)
+	}
+	if cmd.BackoffBase < 0 {
+		return fmt.Errorf("negative backoff base %d", cmd.BackoffBase)
+	}
+	if cmd.BackoffJitter < 0 {
+		return fmt.Errorf("negative backoff jitter %d", cmd.BackoffJitter)
+	}
+	switch cmd.Type {
+	case SubmitCommand:
+		if cmd.JobID == "" {
+			return fmt.Errorf("submit requires job id")
+		}
+	case ClaimCommand:
+		if cmd.JobID == "" || cmd.WorkerID == "" {
+			return fmt.Errorf("claim requires job id and worker id")
+		}
+		if cmd.LeaseDuration <= 0 {
+			return fmt.Errorf("claim requires positive lease duration")
+		}
+	case StartCommand, CompleteCommand:
+		if cmd.JobID == "" || cmd.WorkerID == "" {
+			return fmt.Errorf("%s requires job id and worker id", cmd.Type)
+		}
+	case FailCommand:
+		if cmd.JobID == "" {
+			return fmt.Errorf("fail requires job id")
+		}
+	case ExpireLeasesCommand, RetryDueCommand:
+	case "":
+		return fmt.Errorf("missing command type")
+	default:
+		return fmt.Errorf("unknown command type %q", cmd.Type)
+	}
+	return nil
+}
+
+func sortedJobIDs(jobs map[string]Job) []string {
+	ids := make([]string, 0, len(jobs))
+	for id := range jobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }

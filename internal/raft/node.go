@@ -51,9 +51,6 @@ func NewNodeWithConfig(id NodeID, peers []NodeID, storage Storage, transport Tra
 		cfg.HeartbeatInterval = 50
 	}
 	state := storage.State()
-	if cfg.StateMachine != nil && len(state.Snapshot.State) > 0 {
-		_ = cfg.StateMachine.Restore(state.Snapshot.State)
-	}
 	n := &Node{
 		id:          id,
 		peers:       sortedNodeIDs(peers),
@@ -73,6 +70,11 @@ func NewNodeWithConfig(id NodeID, peers []NodeID, storage Storage, transport Tra
 		nextIndex:   map[NodeID]uint64{},
 		matchIndex:  map[NodeID]uint64{},
 		votes:       map[NodeID]bool{},
+	}
+	if cfg.StateMachine != nil && len(state.Snapshot.State) > 0 {
+		if err := cfg.StateMachine.Restore(state.Snapshot.State); err != nil {
+			n.applyError = err
+		}
 	}
 	n.resetElectionDeadline(0)
 	return n
@@ -298,6 +300,12 @@ func (n *Node) Compact(index uint64) error {
 	if index <= n.snapshot.LastIncludedIndex {
 		return nil
 	}
+	if n.fsm != nil && index != n.lastApplied {
+		return fmt.Errorf("cannot compact state machine at index %d while lastApplied=%d", index, n.lastApplied)
+	}
+	if index > n.commitIndex {
+		return fmt.Errorf("cannot compact uncommitted index %d while commitIndex=%d", index, n.commitIndex)
+	}
 	entry, ok := n.entryAt(index)
 	if !ok {
 		return fmt.Errorf("cannot compact missing index %d", index)
@@ -412,18 +420,21 @@ func (n *Node) handleInstallSnapshot(req InstallSnapshotRequest, now int64) (Ins
 	if req.Snapshot.LastIncludedIndex <= n.snapshot.LastIncludedIndex {
 		return InstallSnapshotResponse{Term: n.currentTerm, LastIncludedIndex: n.snapshot.LastIncludedIndex}, nil
 	}
-	if err := n.storage.SaveSnapshot(req.Snapshot); err != nil {
-		return InstallSnapshotResponse{}, err
-	}
-	if n.fsm != nil {
+	alreadyApplied := req.Snapshot.LastIncludedIndex <= n.lastApplied
+	if n.fsm != nil && !alreadyApplied {
 		if err := n.fsm.Restore(req.Snapshot.State); err != nil {
 			return InstallSnapshotResponse{}, err
 		}
 	}
+	if err := n.storage.SaveSnapshot(req.Snapshot); err != nil {
+		return InstallSnapshotResponse{}, err
+	}
 	n.snapshot = req.Snapshot
 	n.log = n.truncatePrefix(req.Snapshot.LastIncludedIndex)
 	n.commitIndex = max(n.commitIndex, req.Snapshot.LastIncludedIndex)
-	n.lastApplied = max(n.lastApplied, req.Snapshot.LastIncludedIndex)
+	if !alreadyApplied {
+		n.lastApplied = max(n.lastApplied, req.Snapshot.LastIncludedIndex)
+	}
 	return InstallSnapshotResponse{Term: n.currentTerm, LastIncludedIndex: req.Snapshot.LastIncludedIndex}, nil
 }
 
@@ -596,17 +607,18 @@ func (n *Node) truncatePrefix(throughIndex uint64) []Entry {
 
 func (n *Node) applyCommitted() {
 	for n.lastApplied < n.commitIndex {
-		n.lastApplied++
-		entry, ok := n.entryAt(n.lastApplied)
+		next := n.lastApplied + 1
+		entry, ok := n.entryAt(next)
 		if ok {
-			n.applied[n.lastApplied] = entry
 			if n.fsm != nil {
 				if err := n.fsm.Apply(entry.Command); err != nil {
 					n.applyError = err
 					return
 				}
 			}
+			n.applied[next] = entry
 		}
+		n.lastApplied = next
 	}
 }
 

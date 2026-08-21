@@ -22,9 +22,9 @@ Environment:
 - Warm-up: automatic leader election plus 1,000 simulated events
 
 ```text
-BenchmarkRaftProposeThroughput/3_nodes-16    10000     123957 ns/op    17373 B/op    103 allocs/op
-BenchmarkRaftProposeThroughput/5_nodes-16    10000     521292 ns/op    32265 B/op    188 allocs/op
-BenchmarkRaftProposeThroughput/7_nodes-16     7046    1119906 ns/op    48544 B/op    272 allocs/op
+BenchmarkRaftProposeThroughput/3_nodes-16    10000     118308 ns/op    17395 B/op    103 allocs/op
+BenchmarkRaftProposeThroughput/5_nodes-16    10000     419934 ns/op    32307 B/op    188 allocs/op
+BenchmarkRaftProposeThroughput/7_nodes-16     7965    1182069 ns/op    48126 B/op    272 allocs/op
 ```
 
 ## Reproduction

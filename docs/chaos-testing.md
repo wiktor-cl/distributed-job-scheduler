@@ -16,6 +16,9 @@ project.
   through Raft and applied only after commit.
 - Invariant-based history verifier: checks recorded histories against Raft and
   scheduler invariants.
+- Coverage counters: aggregate tests assert that chaos reaches crash, restart,
+  quorum-loss partition, asymmetric partition, snapshot, drop, and duplicate
+  message scenarios.
 
 The must-have verifier is an invariant-based history verifier. It must not be
 called a linearizability checker unless a real linearizability check is
@@ -44,6 +47,7 @@ go test ./internal/verify -run TestChaosSeed -count=1 -args -seed=48213
 | `TestFollowerTruncatesConflictingSuffix` | leader sends replacement entry after same prefix | Log Matching | follower handled term conflict but initially missed the missing-suffix append path | `AppendEntries` now appends `Entries[i:]` after either conflict truncation or first missing entry |
 | `TestWorkerCrashBeforeCompletionRedeliversAfterLeaseExpiry` | claim, start, lease expiry, second claim | Job liveness under at-least-once delivery | expired leases need owner release before redelivery | `ExpireLeasesCommand` clears owner/deadline and next claim issues a higher fencing token |
 | `TestRejectsStaleFencingToken` | token 7 write followed by token 6 write | Gateway fencing | stale external writers cannot be blocked by scheduler state alone | gateway tracks highest accepted token per resource and rejects lower tokens |
+| `TestChaosScenarioCoverageCounters` | 100 deterministic seeds with network faults and snapshots | Chaos coverage | seed count alone did not prove failure-mode diversity | aggregate counters require crash/restart/quorum-loss/asymmetric/snapshot/drop/duplicate coverage |
 
 ## Current Limitation
 
